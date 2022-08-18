@@ -157,7 +157,7 @@ require (
 	github.com/tinylib/msgp v1.1.6
 	github.com/twmb/murmur3 v1.1.6
 	github.com/urfave/negroni v1.0.0
-	github.com/vboulineau/pulumi-definitions v0.0.0-20220729091701-ad3109f742f4
+	github.com/vboulineau/pulumi-definitions v0.0.0-20220812082122-b72394709523
 	github.com/vishvananda/netlink v1.2.0-beta.0.20220404152918-5e915e014938
 	github.com/vishvananda/netns v0.0.0-20211101163701-50045581ed74
 	github.com/vmihailenco/msgpack/v4 v4.3.12
