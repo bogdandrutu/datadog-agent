@@ -16,15 +16,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/golang-lru/simplelru"
-	"go.uber.org/atomic"
-	"golang.org/x/sys/unix"
-	"inet.af/netaddr"
-
 	"github.com/DataDog/datadog-agent/pkg/network"
 	"github.com/DataDog/datadog-agent/pkg/network/config"
+	"github.com/DataDog/datadog-agent/pkg/network/telemetry"
 	"github.com/DataDog/datadog-agent/pkg/process/util"
 	"github.com/DataDog/datadog-agent/pkg/util/log"
+	"github.com/hashicorp/golang-lru/simplelru"
+	"golang.org/x/sys/unix"
+	"inet.af/netaddr"
 )
 
 const (
@@ -37,7 +36,6 @@ type Conntracker interface {
 	GetTranslationForConn(network.ConnectionStats) *network.IPTranslation
 	DeleteTranslation(network.ConnectionStats)
 	IsSampling() bool
-	GetStats() map[string]int64
 	DumpCachedTable(context.Context) (map[uint32][]DebugConntrackEntry, error)
 	Close()
 }
@@ -61,14 +59,14 @@ type orphanEntry struct {
 }
 
 type stats struct {
-	gets                 *atomic.Int64
-	getTimeTotal         *atomic.Int64
-	registers            *atomic.Int64
-	registersDropped     *atomic.Int64
-	registersTotalTime   *atomic.Int64
-	unregisters          *atomic.Int64
-	unregistersTotalTime *atomic.Int64
-	evicts               *atomic.Int64
+	metricGroup      *telemetry.MetricGroup
+	gets             *telemetry.Metric
+	registers        *telemetry.Metric
+	registersDropped *telemetry.Metric
+	unregisters      *telemetry.Metric
+	evicts           *telemetry.Metric
+	stateSize        *telemetry.Metric
+	orphanSize       *telemetry.Metric
 }
 
 type realConntracker struct {
@@ -107,15 +105,16 @@ func NewConntracker(config *config.Config) (Conntracker, error) {
 }
 
 func newStats() stats {
+	metricGroup := telemetry.NewMetricGroup("conntrack", telemetry.OptExpvar)
 	return stats{
-		gets:                 atomic.NewInt64(0),
-		getTimeTotal:         atomic.NewInt64(0),
-		registers:            atomic.NewInt64(0),
-		registersDropped:     atomic.NewInt64(0),
-		registersTotalTime:   atomic.NewInt64(0),
-		unregisters:          atomic.NewInt64(0),
-		unregistersTotalTime: atomic.NewInt64(0),
-		evicts:               atomic.NewInt64(0),
+		metricGroup:      metricGroup,
+		gets:             metricGroup.NewMetric("gets"),
+		registers:        metricGroup.NewMetric("registers"),
+		registersDropped: metricGroup.NewMetric("registers_dropped"),
+		unregisters:      metricGroup.NewMetric("unregisters"),
+		evicts:           metricGroup.NewMetric("evicts"),
+		stateSize:        metricGroup.NewMetric("state_size", telemetry.OptGauge),
+		orphanSize:       metricGroup.NewMetric("orphan_size", telemetry.OptGauge),
 	}
 }
 
@@ -129,6 +128,8 @@ func newConntrackerOnce(procRoot string, maxStateSize, targetRateLimit int, list
 		decoder:       NewDecoder(),
 		stats:         newStats(),
 	}
+
+	// init telemetry
 
 	for _, family := range []uint8{unix.AF_INET, unix.AF_INET6} {
 		events, err := consumer.DumpTable(family)
@@ -147,11 +148,7 @@ func newConntrackerOnce(procRoot string, maxStateSize, targetRateLimit int, list
 }
 
 func (ctr *realConntracker) GetTranslationForConn(c network.ConnectionStats) *network.IPTranslation {
-	then := time.Now().UnixNano()
-	defer func() {
-		ctr.stats.gets.Inc()
-		ctr.stats.getTimeTotal.Add(time.Now().UnixNano() - then)
-	}()
+	ctr.stats.gets.Add(1)
 
 	ctr.Lock()
 	defer ctr.Unlock()
@@ -170,54 +167,7 @@ func (ctr *realConntracker) GetTranslationForConn(c network.ConnectionStats) *ne
 	return t.IPTranslation
 }
 
-func (ctr *realConntracker) GetStats() map[string]int64 {
-	// only a few stats are locked
-	ctr.RLock()
-	size := ctr.cache.cache.Len()
-	orphanSize := ctr.cache.orphans.Len()
-	ctr.RUnlock()
-
-	m := map[string]int64{
-		"state_size":  int64(size),
-		"orphan_size": int64(orphanSize),
-	}
-
-	gets := ctr.stats.gets.Load()
-	getTimeTotal := ctr.stats.getTimeTotal.Load()
-	m["gets_total"] = gets
-	if gets != 0 {
-		m["nanoseconds_per_get"] = getTimeTotal / gets
-	}
-
-	registers := ctr.stats.registers.Load()
-	m["registers_total"] = registers
-	registersTotalTime := ctr.stats.registersTotalTime.Load()
-	if registers != 0 {
-		m["nanoseconds_per_register"] = registersTotalTime / registers
-	}
-
-	unregisters := ctr.stats.unregisters.Load()
-	unregisterTotalTime := ctr.stats.unregistersTotalTime.Load()
-	m["unregisters_total"] = unregisters
-	if unregisters != 0 {
-		m["nanoseconds_per_unregister"] = unregisterTotalTime / unregisters
-	}
-	m["evicts_total"] = ctr.stats.evicts.Load()
-
-	// Merge telemetry from the consumer
-	for k, v := range ctr.consumer.GetStats() {
-		m[k] = v
-	}
-
-	return m
-}
-
 func (ctr *realConntracker) DeleteTranslation(c network.ConnectionStats) {
-	then := time.Now().UnixNano()
-	defer func() {
-		ctr.stats.unregistersTotalTime.Add(time.Now().UnixNano() - then)
-	}()
-
 	ctr.Lock()
 	defer ctr.Unlock()
 
@@ -228,15 +178,16 @@ func (ctr *realConntracker) DeleteTranslation(c network.ConnectionStats) {
 	}
 
 	if ctr.cache.Remove(k) {
-		ctr.stats.unregisters.Inc()
+		ctr.stats.unregisters.Add(1)
 	}
 }
 
 func (ctr *realConntracker) IsSampling() bool {
-	return ctr.consumer.GetStats()[samplingPct] < 100
+	return ctr.consumer.SamplingPct() < 100
 }
 
 func (ctr *realConntracker) Close() {
+	ctr.stats.metricGroup.Clear()
 	ctr.consumer.Stop()
 	ctr.compactTicker.Stop()
 }
@@ -250,7 +201,7 @@ func (ctr *realConntracker) loadInitialState(events <-chan Event) {
 			}
 
 			evicts := ctr.cache.Add(c, false)
-			ctr.stats.registers.Inc()
+			ctr.stats.registers.Add(1)
 			ctr.stats.evicts.Add(int64(evicts))
 		}
 	}
@@ -261,20 +212,19 @@ func (ctr *realConntracker) loadInitialState(events <-chan Event) {
 func (ctr *realConntracker) register(c Con) int {
 	// don't bother storing if the connection is not NAT
 	if !IsNAT(c) {
-		ctr.stats.registersDropped.Inc()
+		ctr.stats.registersDropped.Add(1)
 		return 0
 	}
-
-	then := time.Now().UnixNano()
 
 	ctr.Lock()
 	defer ctr.Unlock()
 
 	evicts := ctr.cache.Add(c, true)
 
-	ctr.stats.registers.Inc()
+	ctr.stats.registers.Add(1)
 	ctr.stats.evicts.Add(int64(evicts))
-	ctr.stats.registersTotalTime.Add(time.Now().UnixNano() - then)
+	ctr.stats.stateSize.Set(int64(ctr.cache.Len()))
+	ctr.stats.orphanSize.Set(int64(ctr.cache.orphans.Len()))
 
 	return 0
 }
