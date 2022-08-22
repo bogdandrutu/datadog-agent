@@ -18,20 +18,19 @@ import (
 	"time"
 	"unsafe"
 
-	manager "github.com/DataDog/ebpf-manager"
-	"github.com/cihub/seelog"
-	"github.com/cilium/ebpf"
-	libnetlink "github.com/mdlayher/netlink"
-	"go.uber.org/atomic"
-	"golang.org/x/sys/unix"
-
 	"github.com/DataDog/datadog-agent/pkg/network"
 	"github.com/DataDog/datadog-agent/pkg/network/config"
 	netebpf "github.com/DataDog/datadog-agent/pkg/network/ebpf"
 	"github.com/DataDog/datadog-agent/pkg/network/ebpf/probes"
 	"github.com/DataDog/datadog-agent/pkg/network/netlink"
+	"github.com/DataDog/datadog-agent/pkg/network/telemetry"
 	"github.com/DataDog/datadog-agent/pkg/process/util"
 	"github.com/DataDog/datadog-agent/pkg/util/log"
+	manager "github.com/DataDog/ebpf-manager"
+	"github.com/cihub/seelog"
+	"github.com/cilium/ebpf"
+	libnetlink "github.com/mdlayher/netlink"
+	"golang.org/x/sys/unix"
 )
 
 var tuplePool = sync.Pool{
@@ -41,18 +40,19 @@ var tuplePool = sync.Pool{
 }
 
 type ebpfConntrackerStats struct {
-	gets                 *atomic.Int64
-	getTotalTime         *atomic.Int64
-	unregisters          *atomic.Int64
-	unregistersTotalTime *atomic.Int64
+	metricGroup *telemetry.MetricGroup
+	gets        *telemetry.Metric
+	registers   *telemetry.Metric
+	unregisters *telemetry.Metric
 }
 
 func newEbpfConntrackerStats() ebpfConntrackerStats {
+	metricGroup := telemetry.NewMetricGroup("conntrack", telemetry.OptExpvar, telemetry.OptMonotonic)
 	return ebpfConntrackerStats{
-		gets:                 atomic.NewInt64(0),
-		getTotalTime:         atomic.NewInt64(0),
-		unregisters:          atomic.NewInt64(0),
-		unregistersTotalTime: atomic.NewInt64(0),
+		metricGroup: metricGroup,
+		gets:        metricGroup.NewMetric("gets"),
+		registers:   metricGroup.NewMetric("registers_total"),
+		unregisters: metricGroup.NewMetric("unregisters_total"),
 	}
 }
 
@@ -184,7 +184,6 @@ func toConntrackTupleFromStats(src *netebpf.ConntrackTuple, stats *network.Conne
 }
 
 func (e *ebpfConntracker) GetTranslationForConn(stats network.ConnectionStats) *network.IPTranslation {
-	start := time.Now()
 	src := tuplePool.Get().(*netebpf.ConntrackTuple)
 	defer tuplePool.Put(src)
 
@@ -214,8 +213,7 @@ func (e *ebpfConntracker) GetTranslationForConn(stats network.ConnectionStats) *
 	}
 	defer tuplePool.Put(dst)
 
-	e.stats.gets.Inc()
-	e.stats.getTotalTime.Add(time.Now().Sub(start).Nanoseconds())
+	e.stats.gets.Add(1)
 	return &network.IPTranslation{
 		ReplSrcIP:   dst.SourceAddress(),
 		ReplDstIP:   dst.DestAddress(),
@@ -251,7 +249,6 @@ func (e *ebpfConntracker) delete(key *netebpf.ConntrackTuple) {
 }
 
 func (e *ebpfConntracker) DeleteTranslation(stats network.ConnectionStats) {
-	start := time.Now()
 	key := tuplePool.Get().(*netebpf.ConntrackTuple)
 	defer tuplePool.Put(key)
 
@@ -263,44 +260,13 @@ func (e *ebpfConntracker) DeleteTranslation(stats network.ConnectionStats) {
 		e.delete(dst)
 		tuplePool.Put(dst)
 	}
-	e.stats.unregisters.Inc()
-	e.stats.unregistersTotalTime.Add(time.Now().Sub(start).Nanoseconds())
-}
-
-func (e *ebpfConntracker) GetStats() map[string]int64 {
-	m := map[string]int64{
-		"state_size": 0,
-	}
-	telemetry := &netebpf.ConntrackTelemetry{}
-	if err := e.telemetryMap.Lookup(unsafe.Pointer(&zero), unsafe.Pointer(telemetry)); err != nil {
-		log.Tracef("error retrieving the telemetry struct: %s", err)
-	} else {
-		m["registers_total"] = int64(telemetry.Registers)
-	}
-
-	gets := e.stats.gets.Load()
-	getTimeTotal := e.stats.getTotalTime.Load()
-	m["gets_total"] = gets
-	if gets > 0 {
-		m["nanoseconds_per_get"] = getTimeTotal / gets
-	}
-
-	unregisters := e.stats.unregisters.Load()
-	unregistersTimeTotal := e.stats.unregistersTotalTime.Load()
-	m["unregisters_total"] = unregisters
-	if unregisters > 0 {
-		m["nanoseconds_per_unregister"] = unregistersTimeTotal / unregisters
-	}
-
-	// Merge telemetry from the consumer
-	for k, v := range e.consumer.GetStats() {
-		m[k] = v
-	}
-
-	return m
+	e.stats.unregisters.Add(1)
 }
 
 func (e *ebpfConntracker) Close() {
+	e.stop <- struct{}{} // synchronize with telemetry reporter go-routine
+	close(e.stop)
+	e.stats.metricGroup.Clear()
 	err := e.m.Stop(manager.CleanAll)
 	if err != nil {
 		log.Warnf("error cleaning up ebpf conntrack: %s", err)
@@ -355,6 +321,28 @@ func (e *ebpfConntracker) DumpCachedTable(ctx context.Context) (map[uint32][]net
 		return nil, it.Err()
 	}
 	return entries, nil
+}
+
+func (e *ebpfConntracker) updateTelemetry() {
+	t := time.NewTicker(30 * time.Second)
+	go func() {
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				telemetry := new(netebpf.ConntrackTelemetry)
+				err := e.telemetryMap.Lookup(unsafe.Pointer(&zero), unsafe.Pointer(telemetry))
+				if err != nil {
+					log.Tracef("error retrieving the telemetry struct: %s", err)
+					continue
+				}
+
+				e.stats.registers.Set(int64(telemetry.Registers))
+			case <-e.stop:
+				return
+			}
+		}
+	}()
 }
 
 func getManager(buf io.ReaderAt, maxStateSize int) (*manager.Manager, error) {

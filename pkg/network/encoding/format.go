@@ -106,19 +106,6 @@ func FormatCompilationTelemetry(telByAsset map[string]network.RuntimeCompilation
 	return ret
 }
 
-// FormatConnectionTelemetry converts telemetry from its internal representation to a protobuf message
-func FormatConnectionTelemetry(tel map[network.ConnTelemetryType]int64) map[string]int64 {
-	if tel == nil {
-		return nil
-	}
-
-	ret := make(map[string]int64)
-	for k, v := range tel {
-		ret[string(k)] = v
-	}
-	return ret
-}
-
 func returnToPool(c *model.Connections) {
 	if c.Conns != nil {
 		for _, c := range c.Conns {

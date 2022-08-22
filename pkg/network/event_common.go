@@ -119,67 +119,11 @@ type BufferedData struct {
 type Connections struct {
 	BufferedData
 	DNS                         map[util.Address][]dns.Hostname
-	ConnTelemetry               map[ConnTelemetryType]int64
+	ConnTelemetry               map[string]int64
 	CompilationTelemetryByAsset map[string]RuntimeCompilationTelemetry
 	HTTP                        map[http.Key]*http.RequestStats
 	DNSStats                    dns.StatsByKeyByNameByType
 }
-
-// ConnTelemetryType enumerates the connection telemetry gathered by the system-probe
-// The string name of each telemetry type is the metric name which will be emitted
-type ConnTelemetryType string
-
-//revive:disable:exported
-const (
-	MonotonicKprobesTriggered       ConnTelemetryType = "kprobes_triggered"
-	MonotonicKprobesMissed          ConnTelemetryType = "kprobes_missed"
-	MonotonicClosedConnDropped      ConnTelemetryType = "closed_conn_dropped"
-	MonotonicConnDropped            ConnTelemetryType = "conn_dropped"
-	MonotonicConnsClosed            ConnTelemetryType = "conns_closed"
-	MonotonicConntrackRegisters     ConnTelemetryType = "conntrack_registers"
-	MonotonicDNSPacketsProcessed    ConnTelemetryType = "dns_packets_processed"
-	MonotonicPerfLost               ConnTelemetryType = "perf_lost"
-	MonotonicUDPSendsProcessed      ConnTelemetryType = "udp_sends_processed"
-	MonotonicUDPSendsMissed         ConnTelemetryType = "udp_sends_missed"
-	DNSStatsDropped                 ConnTelemetryType = "dns_stats_dropped"
-	ConnsBpfMapSize                 ConnTelemetryType = "conns_bpf_map_size"
-	ConntrackSamplingPercent        ConnTelemetryType = "conntrack_sampling_percent"
-	NPMDriverFlowsMissedMaxExceeded ConnTelemetryType = "driver_flows_missed_max_exceeded"
-	MonotonicDNSPacketsDropped      ConnTelemetryType = "dns_packets_dropped"
-	HTTPRequestsDropped             ConnTelemetryType = "http_requests_dropped"
-	HTTPRequestsMissed              ConnTelemetryType = "http_requests_missed"
-)
-
-//revive:enable
-
-var (
-	// ConnTelemetryTypes lists all the possible (non-monotonic) telemetry which can be bundled
-	// into the network connections payload
-	ConnTelemetryTypes = []ConnTelemetryType{
-		ConnsBpfMapSize,
-		ConntrackSamplingPercent,
-		DNSStatsDropped,
-		NPMDriverFlowsMissedMaxExceeded,
-		HTTPRequestsDropped,
-		HTTPRequestsMissed,
-	}
-
-	// MonotonicConnTelemetryTypes lists all the possible monotonic telemetry which can be bundled
-	// into the network connections payload
-	MonotonicConnTelemetryTypes = []ConnTelemetryType{
-		MonotonicKprobesTriggered,
-		MonotonicKprobesMissed,
-		MonotonicClosedConnDropped,
-		MonotonicConnDropped,
-		MonotonicConntrackRegisters,
-		MonotonicDNSPacketsProcessed,
-		MonotonicConnsClosed,
-		MonotonicUDPSendsProcessed,
-		MonotonicUDPSendsMissed,
-		MonotonicDNSPacketsDropped,
-		MonotonicPerfLost,
-	}
-)
 
 // RuntimeCompilationTelemetry stores telemetry related to the runtime compilation of various assets
 type RuntimeCompilationTelemetry struct {
