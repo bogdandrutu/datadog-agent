@@ -16,15 +16,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/datadog-agent/pkg/network/config"
+	"github.com/DataDog/datadog-agent/pkg/network/telemetry"
+	"github.com/DataDog/datadog-agent/pkg/process/util"
+	"github.com/DataDog/datadog-agent/pkg/util/kernel"
 	"github.com/google/gopacket/layers"
 	"github.com/miekg/dns"
 	mdns "github.com/miekg/dns"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/DataDog/datadog-agent/pkg/network/config"
-	"github.com/DataDog/datadog-agent/pkg/process/util"
-	"github.com/DataDog/datadog-agent/pkg/util/kernel"
 )
 
 func skipIfDNSNotSupported(t *testing.T) {
@@ -51,15 +51,20 @@ func checkSnooping(t *testing.T, destIP string, destName string, reverseDNS *dns
 	assert.Contains(t, names[destAddr], ToHostname(destName))
 
 	// Verify telemetry
-	stats := reverseDNS.GetStats()
-	assert.True(t, stats["ips"] >= 1)
+	var (
+		ips      = telemetry.NewMetric("dns.ips").Get()
+		lookups  = telemetry.NewMetric("dns.lookups").Get()
+		resolved = telemetry.NewMetric("dns.resolved").Get()
+	)
+
+	assert.True(t, ips >= 1)
 
 	if srcIP != destIP {
-		assert.Equal(t, int64(2), stats["lookups"])
+		assert.Equal(t, int64(2), lookups)
 	} else {
-		assert.Equal(t, int64(1), stats["lookups"])
+		assert.Equal(t, int64(1), lookups)
 	}
-	assert.Equal(t, int64(1), stats["resolved"])
+	assert.Equal(t, int64(1), resolved)
 }
 
 func TestDNSOverUDPSnooping(t *testing.T) {
@@ -307,7 +312,7 @@ func TestDNSFailedResponseCount(t *testing.T) {
 	statKeeper := reverseDNS.statKeeper
 
 	domains := []string{
-		"nonexistenent.net.com",
+		"nonexistenent.com.net",
 		"aabdgdfsgsdafsdafsad",
 	}
 	queryIP, queryPort, reps := sendDNSQueries(t, domains, validDNSServerIP, "tcp")
@@ -451,9 +456,8 @@ func TestParsingError(t *testing.T) {
 	// Pass a byte array of size 1 which should result in parsing error
 	err = reverseDNS.processPacket(make([]byte, 1), time.Now())
 	require.NoError(t, err)
-	stats := reverseDNS.GetStats()
-	assert.True(t, stats["ips"] == 0)
-	assert.True(t, stats["decoding_errors"] == 1)
+	assert.Equal(t, int64(0), telemetry.NewMetric("dns.ips").Get())
+	assert.Equal(t, int64(1), telemetry.NewMetric("dns.decoding_errors").Get())
 }
 
 func TestDNSOverIPv6(t *testing.T) {

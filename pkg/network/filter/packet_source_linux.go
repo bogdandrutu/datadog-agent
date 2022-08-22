@@ -18,9 +18,9 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/afpacket"
 	"github.com/google/gopacket/layers"
-	"go.uber.org/atomic"
 	"golang.org/x/net/bpf"
 
+	"github.com/DataDog/datadog-agent/pkg/network/telemetry"
 	"github.com/DataDog/datadog-agent/pkg/util/log"
 )
 
@@ -32,10 +32,11 @@ type AFPacketSource struct {
 	exit chan struct{}
 
 	// telemetry
-	polls     *atomic.Int64
-	processed *atomic.Int64
-	captured  *atomic.Int64
-	dropped   *atomic.Int64
+	metricGroup *telemetry.MetricGroup
+	polls       *telemetry.Metric
+	processed   *telemetry.Metric
+	captured    *telemetry.Metric
+	dropped     *telemetry.Metric
 }
 
 func NewPacketSource(filter *manager.Probe, bpfFilter []bpf.RawInstruction) (*AFPacketSource, error) {
@@ -63,14 +64,17 @@ func NewPacketSource(filter *manager.Probe, bpfFilter []bpf.RawInstruction) (*AF
 		}
 	}
 
+	metricGroup := telemetry.NewMetricGroup("dns", telemetry.OptMonotonic, telemetry.OptExpvar)
 	ps := &AFPacketSource{
 		TPacket:      rawSocket,
 		socketFilter: filter,
 		exit:         make(chan struct{}),
-		polls:        atomic.NewInt64(0),
-		processed:    atomic.NewInt64(0),
-		captured:     atomic.NewInt64(0),
-		dropped:      atomic.NewInt64(0),
+		// Telemetry
+		metricGroup: metricGroup,
+		polls:       metricGroup.NewMetric("socket_polls"),
+		processed:   metricGroup.NewMetric("packets_processed", telemetry.OptTelemetry),
+		captured:    metricGroup.NewMetric("packets_captured"),
+		dropped:     metricGroup.NewMetric("packets_dropped", telemetry.OptTelemetry),
 	}
 	go ps.pollStats()
 
@@ -78,12 +82,7 @@ func NewPacketSource(filter *manager.Probe, bpfFilter []bpf.RawInstruction) (*AF
 }
 
 func (p *AFPacketSource) Stats() map[string]int64 {
-	return map[string]int64{
-		"socket_polls":      p.polls.Load(),
-		"packets_processed": p.processed.Load(),
-		"packets_captured":  p.captured.Load(),
-		"packets_dropped":   p.dropped.Load(),
-	}
+	return p.metricGroup.Summary()
 }
 
 func (p *AFPacketSource) VisitPackets(exit <-chan struct{}, visit func([]byte, time.Time) error) error {
@@ -121,6 +120,7 @@ func (p *AFPacketSource) PacketType() gopacket.LayerType {
 }
 
 func (p *AFPacketSource) Close() {
+	p.metricGroup.Clear()
 	close(p.exit)
 	p.TPacket.Close()
 }

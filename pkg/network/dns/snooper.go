@@ -12,12 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/gopacket"
-	"go.uber.org/atomic"
-
 	"github.com/DataDog/datadog-agent/pkg/network/config"
+	"github.com/DataDog/datadog-agent/pkg/network/telemetry"
 	"github.com/DataDog/datadog-agent/pkg/process/util"
 	"github.com/DataDog/datadog-agent/pkg/util/log"
+	"github.com/google/gopacket"
 )
 
 const (
@@ -29,14 +28,16 @@ var _ ReverseDNS = &socketFilterSnooper{}
 
 // socketFilterSnooper is a DNS traffic snooper built on top of an eBPF SOCKET_FILTER
 type socketFilterSnooper struct {
-	// Telemetry
-	decodingErrors *atomic.Int64
-	truncatedPkts  *atomic.Int64
+	// Packet telemetry
+	metricGroup    *telemetry.MetricGroup
+	decodingErrors *telemetry.Metric
+	truncatedPkts  *telemetry.Metric
 
 	// DNS telemetry, values calculated *till* the last tick in pollStats
-	queries   *atomic.Int64
-	successes *atomic.Int64
-	errors    *atomic.Int64
+	queries    *telemetry.Metric
+	successes  *telemetry.Metric
+	errors     *telemetry.Metric
+	lastReport *telemetry.Metric
 
 	source          packetSource
 	parser          *dnsParser
@@ -82,13 +83,9 @@ func newSocketFilterSnooper(cfg *config.Config, source packetSource) (*socketFil
 	} else {
 		log.Infof("DNS Stats Collection has been disabled.")
 	}
-	snooper := &socketFilterSnooper{
-		decodingErrors: atomic.NewInt64(0),
-		truncatedPkts:  atomic.NewInt64(0),
-		queries:        atomic.NewInt64(0),
-		successes:      atomic.NewInt64(0),
-		errors:         atomic.NewInt64(0),
 
+	metricGroup := telemetry.NewMetricGroup("dns", telemetry.OptExpvar)
+	snooper := &socketFilterSnooper{
 		source:          source,
 		parser:          newDNSParser(source.PacketType(), cfg),
 		cache:           cache,
@@ -96,6 +93,15 @@ func newSocketFilterSnooper(cfg *config.Config, source packetSource) (*socketFil
 		translation:     new(translation),
 		exit:            make(chan struct{}),
 		collectLocalDNS: cfg.CollectLocalDNS,
+
+		// telemetry
+		metricGroup:    metricGroup,
+		decodingErrors: metricGroup.NewMetric("decoding_errors"),
+		truncatedPkts:  metricGroup.NewMetric("truncated_packets"),
+		queries:        metricGroup.NewMetric("queries"),
+		successes:      metricGroup.NewMetric("successes"),
+		errors:         metricGroup.NewMetric("errors"),
+		lastReport:     metricGroup.NewMetric("timestamp_micro_secs"),
 	}
 
 	// Start consuming packets
@@ -124,29 +130,16 @@ func (s *socketFilterSnooper) GetDNSStats() StatsByKeyByNameByType {
 	if s.statKeeper == nil {
 		return nil
 	}
+
+	s.updateTelemetry()
 	return s.statKeeper.GetAndResetAllStats()
 }
 
-// GetStats returns stats for use with telemetry
-func (s *socketFilterSnooper) GetStats() map[string]int64 {
-	stats := s.cache.Stats()
-
-	for key, value := range s.source.Stats() {
-		stats[key] = value
+func (s *socketFilterSnooper) updateTelemetry() {
+	for name, value := range s.source.Stats() {
+		s.metricGroup.NewMetric(name).Set(int64(value))
 	}
-
-	stats["decoding_errors"] = s.decodingErrors.Load()
-	stats["truncated_packets"] = s.truncatedPkts.Load()
-	stats["timestamp_micro_secs"] = time.Now().UnixNano() / 1000
-	stats["queries"] = s.queries.Load()
-	stats["successes"] = s.successes.Load()
-	stats["errors"] = s.errors.Load()
-	if s.statKeeper != nil {
-		numStats, droppedStats := s.statKeeper.GetNumStats()
-		stats["num_stats"] = int64(numStats)
-		stats["dropped_stats"] = int64(droppedStats)
-	}
-	return stats
+	s.lastReport.Set(time.Now().UnixNano() / 1000)
 }
 
 // Start starts the snooper (no-op currently)
@@ -156,6 +149,7 @@ func (s *socketFilterSnooper) Start() error {
 
 // Close terminates the DNS traffic snooper as well as the underlying socket and the attached filter
 func (s *socketFilterSnooper) Close() {
+	s.metricGroup.Clear()
 	close(s.exit)
 	s.wg.Wait()
 	s.source.Close()
@@ -179,9 +173,9 @@ func (s *socketFilterSnooper) processPacket(data []byte, ts time.Time) error {
 		switch err {
 		case errSkippedPayload: // no need to count or log cases where the packet is valid but has no relevant content
 		case errTruncated:
-			s.truncatedPkts.Inc()
+			s.truncatedPkts.Add(1)
 		default:
-			s.decodingErrors.Inc()
+			s.decodingErrors.Add(1)
 		}
 		return nil
 	}
@@ -192,11 +186,11 @@ func (s *socketFilterSnooper) processPacket(data []byte, ts time.Time) error {
 
 	if pktInfo.pktType == successfulResponse {
 		s.cache.Add(t)
-		s.successes.Inc()
+		s.successes.Add(1)
 	} else if pktInfo.pktType == failedResponse {
-		s.errors.Inc()
+		s.errors.Add(1)
 	} else {
-		s.queries.Inc()
+		s.queries.Add(1)
 	}
 
 	return nil
@@ -234,9 +228,9 @@ func (s *socketFilterSnooper) logDNSStats() {
 	for {
 		select {
 		case <-ticker.C:
-			queries = s.queries.Load()
-			successes = s.successes.Load()
-			errors = s.errors.Load()
+			queries = s.queries.Get()
+			successes = s.successes.Get()
+			errors = s.errors.Get()
 			log.Infof("DNS Stats. Queries :%d, Successes :%d, Errors: %d", queries-lastQueries, successes-lastSuccesses, errors-lastErrors)
 			lastQueries = queries
 			lastSuccesses = successes
