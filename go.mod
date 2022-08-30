@@ -410,6 +410,7 @@ require (
 require (
 	github.com/DataDog/datadog-agent/pkg/remoteconfig/state v0.39.0-rc.6
 	github.com/go-delve/delve v1.9.0
+	github.com/hashicorp/go-secure-stdlib/awsutil v0.1.6
 	golang.org/x/arch v0.0.0-20190927153633-4e8777c89be4
 )
 
