@@ -16,9 +16,12 @@ import (
 )
 
 const (
+	// TracedCgroupsCountConfKey defines the full config key for traced_cgroups_count
 	TracedCgroupsCountConfKey = "runtime_security_config.activity_dump.traced_cgroups_count"
-	TracedEventTypesConfKey   = "runtime_security_config.activity_dump.traced_event_types"
-	CgroupDumpTimeoutConfKey  = "runtime_security_config.activity_dump.cgroup_dump_timeout"
+	// TracedEventTypesConfKey defines the full config key for traced_event_types
+	TracedEventTypesConfKey = "runtime_security_config.activity_dump.traced_event_types"
+	// CgroupDumpTimeoutConfKey defines the full config key for cgroup_dump_timeout
+	CgroupDumpTimeoutConfKey = "runtime_security_config.activity_dump.cgroup_dump_timeout"
 )
 
 // ActivityDumpRuntimeSetting wraps operations to change activity dumps settings at runtime
@@ -90,6 +93,4 @@ func (l ActivityDumpRuntimeSetting) Set(v interface{}) error {
 	default:
 		return fmt.Errorf("Field %s does not exist", l.ConfigKey)
 	}
-
-	return nil
 }

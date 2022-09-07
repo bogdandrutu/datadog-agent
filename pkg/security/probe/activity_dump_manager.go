@@ -30,7 +30,6 @@ import (
 	"github.com/DataDog/datadog-agent/pkg/util/hostname"
 )
 
-
 // ActivityDumpManager is used to manage ActivityDumps
 type ActivityDumpManager struct {
 	sync.RWMutex
