@@ -95,7 +95,9 @@ __maybe_unused static __always_inline __u64 read_conn_tuple_skb(struct __sk_buff
         tup->sport = load_half(skb, info->data_off + offsetof(struct __tcphdr, source));
         tup->dport = load_half(skb, info->data_off + offsetof(struct __tcphdr, dest));
 
-        info->tcp_seq = load_word(skb, info->data_off + offsetof(struct __tcphdr, seq));
+        /* info->tcp_seq = load_word(skb, info->data_off + offsetof(struct __tcphdr, seq)); */
+        bpf_skb_load_bytes(skb, info->data_off + offsetof(struct __tcphdr, seq), &info->tcp_seq, 4);
+        info->tcp_seq = bpf_ntohl(info->tcp_seq);
         info->tcp_flags = load_byte(skb, info->data_off + TCP_FLAGS_OFFSET);
         // TODO: Improve readability and explain the bit twiddling below
         info->data_off += ((load_byte(skb, info->data_off + offsetof(struct __tcphdr, ack_seq) + 4) & 0xF0) >> 4) * 4;
