@@ -19,7 +19,6 @@ import (
 
 	coreconfig "github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/security/api"
-	"github.com/DataDog/datadog-agent/pkg/security/config"
 	"github.com/DataDog/datadog-agent/pkg/security/metrics"
 	"github.com/DataDog/datadog-agent/pkg/security/probe/dump"
 	"github.com/DataDog/datadog-agent/pkg/security/secl/model"
@@ -31,9 +30,6 @@ import (
 	"github.com/DataDog/datadog-agent/pkg/util/hostname"
 )
 
-func areCGroupADsEnabled(c *config.Config) bool {
-	return c.ActivityDumpTracedCgroupsCount > 0
-}
 
 // ActivityDumpManager is used to manage ActivityDumps
 type ActivityDumpManager struct {
@@ -521,6 +517,12 @@ func (adm *ActivityDumpManager) AddContextTags(ad *ActivityDump) {
 func (adm *ActivityDumpManager) triggerLoadController() {
 	adm.Lock()
 	defer adm.Unlock()
+
+	// before all, check that the config hasn't change due to a runtime setting update
+	if adm.loadController.updateConfigIfNeeded() {
+		// if the config has changed, resetting the current config by the new one is enough for this time
+		return
+	}
 
 	// we first compute the total size used by current activity dumps
 	var totalSize uint64

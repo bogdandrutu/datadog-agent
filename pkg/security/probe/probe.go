@@ -948,8 +948,8 @@ func (p *Probe) selectTCProbes() manager.ProbesSelector {
 
 func (p *Probe) isNeededForActivityDump(eventType eval.EventType) bool {
 	if p.config.ActivityDumpEnabled {
-		for _, e := range p.config.ActivityDumpTracedEventTypes {
-			if e.String() == eventType {
+		for _, e := range aconfig.GetAllPossibleActivityDumpTracedEvents() {
+			if e == eventType {
 				return true
 			}
 		}
@@ -1506,7 +1506,7 @@ func NewProbe(config *config.Config, statsdClient statsd.ClientInterface) (*Prob
 		},
 		manager.ConstantEditor{
 			Name:  "cgroup_activity_dumps_enabled",
-			Value: utils.BoolTouint64(config.ActivityDumpEnabled && areCGroupADsEnabled(config)),
+			Value: utils.BoolTouint64(config.ActivityDumpEnabled),
 		},
 		manager.ConstantEditor{
 			Name:  "net_struct_type",

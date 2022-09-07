@@ -94,6 +94,11 @@ const (
 	maxExternalMetricsProviderChunkSize = 35
 )
 
+// GetAllPossibleActivityDumpTracedEvents defines all the possible values for activity dumps traced events
+func GetAllPossibleActivityDumpTracedEvents() []string {
+	return []string{"exec", "open", "dns", "bind"}
+}
+
 // Datadog is the global configuration object
 var (
 	Datadog       Config
@@ -1108,7 +1113,7 @@ func InitConfig(config Config) {
 	config.BindEnvAndSetDefault("runtime_security_config.activity_dump.load_controller_max_total_size", 100)
 	config.BindEnvAndSetDefault("runtime_security_config.activity_dump.path_merge.enabled", true)
 	config.BindEnvAndSetDefault("runtime_security_config.activity_dump.traced_cgroups_count", 3)
-	config.BindEnvAndSetDefault("runtime_security_config.activity_dump.traced_event_types", []string{"exec", "open", "dns", "bind"})
+	config.BindEnvAndSetDefault("runtime_security_config.activity_dump.traced_event_types", GetAllPossibleActivityDumpTracedEvents())
 	config.BindEnvAndSetDefault("runtime_security_config.activity_dump.cgroup_dump_timeout", 20)
 	config.BindEnvAndSetDefault("runtime_security_config.activity_dump.cgroup_wait_list_size", 0)
 	config.BindEnvAndSetDefault("runtime_security_config.activity_dump.cgroup_differentiate_args", true)

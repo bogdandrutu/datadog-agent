@@ -112,15 +112,6 @@ type Config struct {
 	ActivityDumpLoadControlMaxTotalSize int
 	// ActivityDumpPathMergeEnabled defines if path merge should be enabled
 	ActivityDumpPathMergeEnabled bool
-	// ActivityDumpTracedCgroupsCount defines the maximum count of cgroups that should be monitored concurrently. Leave this parameter to 0 to prevent the generation
-	// of activity dumps based on cgroups.
-	ActivityDumpTracedCgroupsCount int
-	// ActivityDumpTracedEventTypes defines the list of events that should be captured in an activity dump. Leave this
-	// parameter empty to monitor all event types. If not already present, the `exec` event will automatically be added
-	// to this list.
-	ActivityDumpTracedEventTypes []model.EventType
-	// ActivityDumpCgroupDumpTimeout defines the cgroup activity dumps timeout.
-	ActivityDumpCgroupDumpTimeout time.Duration
 	// ActivityDumpCgroupWaitListSize defines the size of the cgroup wait list. The wait list is used to introduce a
 	// delay between 2 activity dumps of the same cgroup.
 	ActivityDumpCgroupWaitListSize int
@@ -146,6 +137,16 @@ type Config struct {
 	// ActivityDumpSyscallMonitorPeriod defines the minimum amount of time to wait between 2 syscalls event for the same
 	// process.
 	ActivityDumpSyscallMonitorPeriod time.Duration
+	// # Dynamic configuration fields:
+	// ActivityDumpTracedCgroupsCount defines the maximum count of cgroups that should be monitored concurrently. Leave this parameter to 0 to prevent the generation
+	// of activity dumps based on cgroups.
+	ActivityDumpTracedCgroupsCount func() int
+	// ActivityDumpTracedEventTypes defines the list of events that should be captured in an activity dump. Leave this
+	// parameter empty to monitor all event types. If not already present, the `exec` event will automatically be added
+	// to this list.
+	ActivityDumpTracedEventTypes func() []model.EventType
+	// ActivityDumpCgroupDumpTimeout defines the cgroup activity dumps timeout.
+	ActivityDumpCgroupDumpTimeout func() time.Duration
 
 	// RuntimeMonitor defines if the runtime monitor should be enabled
 	RuntimeMonitor bool
@@ -241,9 +242,6 @@ func NewConfig(cfg *config.Config) (*Config, error) {
 		ActivityDumpLoadControlPeriod:         time.Duration(coreconfig.Datadog.GetInt("runtime_security_config.activity_dump.load_controller_period")) * time.Minute,
 		ActivityDumpLoadControlMaxTotalSize:   coreconfig.Datadog.GetInt("runtime_security_config.activity_dump.load_controller_max_total_size"),
 		ActivityDumpPathMergeEnabled:          coreconfig.Datadog.GetBool("runtime_security_config.activity_dump.path_merge.enabled"),
-		ActivityDumpTracedCgroupsCount:        coreconfig.Datadog.GetInt("runtime_security_config.activity_dump.traced_cgroups_count"),
-		ActivityDumpTracedEventTypes:          model.ParseEventTypeStringSlice(coreconfig.Datadog.GetStringSlice("runtime_security_config.activity_dump.traced_event_types")),
-		ActivityDumpCgroupDumpTimeout:         time.Duration(coreconfig.Datadog.GetInt("runtime_security_config.activity_dump.cgroup_dump_timeout")) * time.Minute,
 		ActivityDumpCgroupWaitListSize:        coreconfig.Datadog.GetInt("runtime_security_config.activity_dump.cgroup_wait_list_size"),
 		ActivityDumpCgroupDifferentiateArgs:   coreconfig.Datadog.GetBool("runtime_security_config.activity_dump.cgroup_differentiate_args"),
 		ActivityDumpLocalStorageDirectory:     coreconfig.Datadog.GetString("runtime_security_config.activity_dump.local_storage.output_directory"),
@@ -252,6 +250,26 @@ func NewConfig(cfg *config.Config) (*Config, error) {
 		ActivityDumpRemoteStorageCompression:  coreconfig.Datadog.GetBool("runtime_security_config.activity_dump.remote_storage.compression"),
 		ActivityDumpSyscallMonitor:            coreconfig.Datadog.GetBool("runtime_security_config.activity_dump.syscall_monitor.enabled"),
 		ActivityDumpSyscallMonitorPeriod:      time.Duration(coreconfig.Datadog.GetInt("runtime_security_config.activity_dump.syscall_monitor.period")) * time.Second,
+		// activity dump dynamic fields
+		ActivityDumpTracedCgroupsCount: func() int {
+			return coreconfig.Datadog.GetInt("runtime_security_config.activity_dump.traced_cgroups_count")
+		},
+		ActivityDumpTracedEventTypes: func() []model.EventType {
+			evtTypes := model.ParseEventTypeStringSlice(coreconfig.Datadog.GetStringSlice("runtime_security_config.activity_dump.traced_event_types"))
+			var found bool
+			for _, evtType := range evtTypes {
+				if evtType == model.ExecEventType {
+					found = true
+				}
+			}
+			if !found {
+				evtTypes = append(evtTypes, model.ExecEventType)
+			}
+			return evtTypes
+		},
+		ActivityDumpCgroupDumpTimeout: func() time.Duration {
+			return time.Duration(coreconfig.Datadog.GetInt("runtime_security_config.activity_dump.cgroup_dump_timeout")) * time.Minute
+		},
 	}
 
 	// if runtime is enabled then we force fim
@@ -293,16 +311,6 @@ func NewConfig(cfg *config.Config) (*Config, error) {
 		c.HostServiceName = fmt.Sprintf("service:%s", serviceName)
 	}
 
-	var found bool
-	for _, evtType := range c.ActivityDumpTracedEventTypes {
-		if evtType == model.ExecEventType {
-			found = true
-		}
-	}
-	if !found {
-		c.ActivityDumpTracedEventTypes = append(c.ActivityDumpTracedEventTypes, model.ExecEventType)
-	}
-
 	if formats := coreconfig.Datadog.GetStringSlice("runtime_security_config.activity_dump.local_storage.formats"); len(formats) > 0 {
 		var err error
 		c.ActivityDumpLocalStorageFormats, err = dump.ParseStorageFormats(formats)
@@ -319,7 +327,7 @@ func NewConfig(cfg *config.Config) (*Config, error) {
 	}
 
 	if c.ActivityDumpCgroupWaitListSize <= 0 {
-		c.ActivityDumpCgroupWaitListSize = c.ActivityDumpTracedCgroupsCount
+		c.ActivityDumpCgroupWaitListSize = c.ActivityDumpTracedCgroupsCount()
 	}
 
 	lazyInterfaces := make(map[string]bool)

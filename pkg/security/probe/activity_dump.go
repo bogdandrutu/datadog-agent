@@ -377,7 +377,7 @@ func (ad *ActivityDump) isEventTypeTraced(event *Event) bool {
 
 	// other events
 	var traced bool
-	for _, evtType := range ad.adm.probe.config.ActivityDumpTracedEventTypes {
+	for _, evtType := range ad.adm.loadController.getCurrentConfig().tracedEventTypes {
 		if evtType == event.GetEventType() {
 			traced = true
 		}
@@ -1002,7 +1002,7 @@ func (ad *ActivityDump) snapshotProcess(pan *ProcessActivityNode) error {
 		return nil
 	}
 
-	for _, eventType := range ad.adm.probe.config.ActivityDumpTracedEventTypes {
+	for _, eventType := range ad.adm.loadController.getCurrentConfig().tracedEventTypes {
 		switch eventType {
 		case model.FileOpenEventType:
 			if err = pan.snapshotFiles(p, ad); err != nil {

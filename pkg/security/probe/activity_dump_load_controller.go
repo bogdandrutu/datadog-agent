@@ -38,18 +38,25 @@ type ActivityDumpLCConfig struct {
 
 // NewActivityDumpLCConfig returns a new dynamic config from user config
 func NewActivityDumpLCConfig(cfg *config.Config) *ActivityDumpLCConfig {
-	tracedCgroupsCount := uint64(cfg.ActivityDumpTracedCgroupsCount)
+	tracedCgroupsCount := uint64(cfg.ActivityDumpTracedCgroupsCount())
 	if tracedCgroupsCount > probes.MaxTracedCgroupsCount {
 		tracedCgroupsCount = probes.MaxTracedCgroupsCount
 	}
 
 	return &ActivityDumpLCConfig{
-		tracedEventTypes:   cfg.ActivityDumpTracedEventTypes,
+		tracedEventTypes:   cfg.ActivityDumpTracedEventTypes(),
 		tracedCgroupsCount: tracedCgroupsCount,
-		dumpTimeout:        cfg.ActivityDumpCgroupDumpTimeout,
+		dumpTimeout:        cfg.ActivityDumpCgroupDumpTimeout(),
 
 		cgroupWaitListSize: cfg.ActivityDumpCgroupWaitListSize,
 	}
+}
+
+func dumpActivityDumpLCConfig(cfg *ActivityDumpLCConfig) {
+	log.Infof("Activity dump config:\n")
+	log.Infof("  - tracedEventTypes: %+v\n", cfg.tracedEventTypes)
+	log.Infof("  - tracedCgroupsCount: %d\n", cfg.tracedCgroupsCount)
+	log.Infof("  - dumpTimeout: %+v\n", cfg.dumpTimeout)
 }
 
 const minDumpTimeout = 10 * time.Minute
@@ -93,6 +100,8 @@ func (lcCfg *ActivityDumpLCConfig) reduced() *ActivityDumpLCConfig {
 
 // ActivityDumpLoadController is a load controller allowing dynamic change of Activity Dump configuration
 type ActivityDumpLoadController struct {
+	config *config.Config
+
 	rateLimiter *rate.Limiter
 
 	originalConfig *ActivityDumpLCConfig
@@ -141,6 +150,8 @@ func NewActivityDumpLoadController(cfg *config.Config, man *manager.Manager) (*A
 	lcConfig := NewActivityDumpLCConfig(cfg)
 
 	return &ActivityDumpLoadController{
+		config: cfg,
+
 		// 1 every timeout, otherwise we do not have time to see real effects from the reduction
 		rateLimiter: rate.NewLimiter(rate.Every(lcConfig.dumpTimeout), 1),
 
@@ -151,6 +162,38 @@ func NewActivityDumpLoadController(cfg *config.Config, man *manager.Manager) (*A
 		tracedCgroupsLockMap:    tracedCgroupsLockMap,
 		dumpTimeoutMap:          dumpTimeoutMap,
 	}, nil
+}
+
+func isTracedEventTypesEqual(set1, set2 []model.EventType) bool {
+	if len(set1) != len(set2) {
+		return false
+	}
+	for i, v := range set1 {
+		if v != set2[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (lc *ActivityDumpLoadController) updateConfigIfNeeded() bool {
+	newCfg := NewActivityDumpLCConfig(lc.config)
+	if isTracedEventTypesEqual(newCfg.tracedEventTypes, lc.originalConfig.tracedEventTypes) &&
+		newCfg.tracedCgroupsCount == lc.originalConfig.tracedCgroupsCount &&
+		newCfg.dumpTimeout == lc.originalConfig.dumpTimeout {
+		return false
+	}
+	log.Infof("Activity dump load controller config update:\n")
+	dumpActivityDumpLCConfig(lc.getCurrentConfig())
+	log.Infof("Replaced by:\n")
+	dumpActivityDumpLCConfig(newCfg)
+	lc.originalConfig = newCfg
+	lc.currentConfig = nil
+
+	if err := lc.propagateLoadSettings(); err != nil {
+		log.Errorf("failed to propagate activity dump load controller runtime settings: %v", err)
+	}
+	return true
 }
 
 func (lc *ActivityDumpLoadController) getCurrentConfig() *ActivityDumpLCConfig {
@@ -170,7 +213,6 @@ func (lc *ActivityDumpLoadController) reduceConfig() bool {
 			log.Errorf("failed to propagate activity dump load controller settings: %v", err)
 		}
 
-		lc.rateLimiter.SetLimit(rate.Every(newCfg.dumpTimeout))
 		return true
 	}
 	return false
@@ -178,6 +220,8 @@ func (lc *ActivityDumpLoadController) reduceConfig() bool {
 
 func (lc *ActivityDumpLoadController) propagateLoadSettings() error {
 	lcConfig := lc.getCurrentConfig()
+
+	lc.rateLimiter.SetLimit(rate.Every(lcConfig.dumpTimeout))
 
 	// traced event types
 	for i := uint64(0); i != uint64(model.MaxKernelEventType); i++ {
