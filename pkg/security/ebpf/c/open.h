@@ -299,11 +299,6 @@ SYSCALL_COMPAT_KRETPROBE(openat) {
     return kprobe_sys_open_ret(ctx);
 }
 
-SEC("tracepoint/syscalls/sys_exit_openat2")
-int tracepoint_syscalls_sys_exit_openat2(struct tracepoint_syscalls_sys_exit_t *args) {
-    return sys_open_ret(args, args->ret, DR_TRACEPOINT);
-}
-
 SYSCALL_KRETPROBE(openat2) {
     return kprobe_sys_open_ret(ctx);
 }
