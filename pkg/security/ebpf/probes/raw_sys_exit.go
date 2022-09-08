@@ -144,5 +144,6 @@ func getSysExitTailCallRoutes() []manager.TailCallRoute {
 				EBPFFuncName: "tracepoint_handle_sys_commit_creds_exit",
 			},
 		},
+		// TODO: bind, bpf, mmap, load/delete module, mprotect, ptrace, splice
 	}
 }
