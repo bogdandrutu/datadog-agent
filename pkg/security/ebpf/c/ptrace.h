@@ -64,4 +64,9 @@ SYSCALL_KRETPROBE(ptrace) {
     return sys_ptrace_ret(ctx, (int)PT_REGS_RC(ctx));
 }
 
+SEC("tracepoint/handle_sys_ptrace_exit")
+int tracepoint_handle_sys_ptrace_exit(struct tracepoint_raw_syscalls_sys_exit_t *args) {
+    return sys_ptrace_ret(args, args->ret);
+}
+
 #endif

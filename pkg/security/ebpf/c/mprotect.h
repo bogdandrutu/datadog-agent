@@ -122,4 +122,9 @@ SYSCALL_KRETPROBE(mprotect) {
     return sys_mprotect_ret(ctx, (int)PT_REGS_RC(ctx));
 }
 
+SEC("tracepoint/handle_sys_mprotect_exit")
+int tracepoint_handle_sys_mprotect_exit(struct tracepoint_raw_syscalls_sys_exit_t *args) {
+    return sys_mprotect_ret(args, args->ret);
+}
+
 #endif

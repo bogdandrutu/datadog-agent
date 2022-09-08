@@ -442,4 +442,9 @@ int kprobe_check_helper_call(struct pt_regs *ctx) {
     return 0;
 }
 
+SEC("tracepoint/handle_sys_bpf_exit")
+int tracepoint_handle_sys_bpf_exit(struct tracepoint_raw_syscalls_sys_exit_t *args) {
+    return sys_bpf_ret(args, args->ret);
+}
+
 #endif

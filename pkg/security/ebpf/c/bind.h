@@ -119,4 +119,9 @@ int kprobe_security_socket_bind(struct pt_regs *ctx) {
     return 0;
 }
 
+SEC("tracepoint/handle_sys_bind_exit")
+int tracepoint_handle_sys_bind_exit(struct tracepoint_raw_syscalls_sys_exit_t *args) {
+    return sys_bind_ret(args, args->ret);
+}
+
 #endif /* _BIND_H_ */
