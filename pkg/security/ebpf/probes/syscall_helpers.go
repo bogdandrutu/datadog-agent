@@ -97,11 +97,7 @@ func expandKprobe(hookpoint string, syscallName string, flag int) []string {
 		sections = append(sections, "kprobe/"+hookpoint)
 	}
 	if flag&Exit == Exit {
-		if len(syscallName) > 0 && ShouldUseSyscallExitTracepoints() {
-			sections = append(sections, "tracepoint/syscalls/sys_exit_"+syscallName)
-		} else {
-			sections = append(sections, "kretprobe/"+hookpoint)
-		}
+		sections = append(sections, "kretprobe/"+hookpoint)
 	}
 	return sections
 }

@@ -175,9 +175,4 @@ SYSCALL_KRETPROBE(splice) {
     return sys_splice_ret(ctx, (int)PT_REGS_RC(ctx));
 }
 
-SEC("tracepoint/syscalls/sys_exit_splice")
-int tracepoint_syscalls_sys_exit_splice(struct tracepoint_syscalls_sys_exit_t *args) {
-    return sys_splice_ret(args, (int)args->ret);
-}
-
 #endif
