@@ -16,6 +16,7 @@ import (
 )
 
 type failedConnStats struct {
+	direction    netebpf.ConnDirection
 	failureCount uint64
 }
 
@@ -43,13 +44,13 @@ func (c *tcpFailedConnConsumer) Start() {
 	go func() {
 		for {
 			select {
-			case rawConnTuple, ok := <-c.perfHandler.DataChannel:
+			case rawFailedConnStats, ok := <-c.perfHandler.DataChannel:
 				if !ok {
 					return
 				}
 
-				connTuple := toConnTuple(rawConnTuple.Data)
-				c.addFailedConn(connTuple)
+				stats := toFailedConnStats(rawFailedConnStats.Data)
+				c.addFailedConn(stats)
 			}
 		}
 	}()
@@ -76,16 +77,17 @@ func (c *tcpFailedConnConsumer) GetStats() failedConnMap {
 
 // Utils
 
-func (c *tcpFailedConnConsumer) addFailedConn(t *netebpf.ConnTuple) {
+func (c *tcpFailedConnConsumer) addFailedConn(s *netebpf.FailedConnStats) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	stats := c.failedConns[*t]
+	stats := c.failedConns[(*s).Ct]
 	stats.failureCount += 1
+	stats.direction = netebpf.ConnDirection((*s).Dir)
 
-	c.failedConns[*t] = stats
+	c.failedConns[(*s).Ct] = stats
 }
 
-func toConnTuple(data []byte) *netebpf.ConnTuple {
-	return (*netebpf.ConnTuple)(unsafe.Pointer(&data[0]))
+func toFailedConnStats(data []byte) *netebpf.FailedConnStats {
+	return (*netebpf.FailedConnStats)(unsafe.Pointer(&data[0]))
 }
