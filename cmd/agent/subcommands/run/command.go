@@ -97,8 +97,6 @@ var (
 	demux *aggregator.AgentDemultiplexer
 )
 
-const jmxLoggerName config.LoggerName = "JMXFETCH"
-
 // Command returns a cobra command to report on the agent's health
 func Command(globalArgs *app.GlobalArgs) *cobra.Command {
 	runCmd := &cobra.Command{
@@ -202,7 +200,7 @@ func StartAgent(globalArgs *app.GlobalArgs) error {
 		}
 
 		loggerSetupErr = config.SetupLogger(
-			globalArgs.LoggerName,
+			config.CoreLoggerName,
 			config.Datadog.GetString("log_level"),
 			logFile,
 			syslogURI,
@@ -214,7 +212,6 @@ func StartAgent(globalArgs *app.GlobalArgs) error {
 		// Setup JMX logger
 		if loggerSetupErr == nil {
 			loggerSetupErr = config.SetupJMXLogger(
-				jmxLoggerName,
 				jmxLogFile,
 				syslogURI,
 				config.Datadog.GetBool("syslog_rfc"),
@@ -225,7 +222,7 @@ func StartAgent(globalArgs *app.GlobalArgs) error {
 
 	} else {
 		loggerSetupErr = config.SetupLogger(
-			globalArgs.LoggerName,
+			config.CoreLoggerName,
 			config.Datadog.GetString("log_level"),
 			"", // no log file on android
 			"", // no syslog on android,
@@ -237,7 +234,6 @@ func StartAgent(globalArgs *app.GlobalArgs) error {
 		// Setup JMX logger
 		if loggerSetupErr == nil {
 			loggerSetupErr = config.SetupJMXLogger(
-				jmxLoggerName,
 				"", // no log file on android
 				"", // no syslog on android,
 				false,
