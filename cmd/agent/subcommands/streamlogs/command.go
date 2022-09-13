@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/cmd/agent/common"
 	"github.com/DataDog/datadog-agent/pkg/api/util"
 	"github.com/DataDog/datadog-agent/pkg/config"
@@ -21,46 +21,48 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
+// cliParams are the command-line arguments for this subcommand
+type cliParams struct {
+	// confFilePath is the value of the --cfgpath flag.
+	confFilePath string
+
 	filters diagnostic.Filters
-)
+}
 
 // Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
-	troubleshootLogsCmd := &cobra.Command{
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
+	cliParams := &cliParams{}
+	cmd := &cobra.Command{
 		Use:   "stream-logs",
 		Short: "Stream the logs being processed by a running agent",
 		Long:  ``,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			err := common.SetupConfigWithoutSecrets(globalArgs.ConfFilePath, "")
-			if err != nil {
-				return fmt.Errorf("unable to set up global agent configuration: %v", err)
-			}
-
-			err = config.SetupLogger(config.CoreLoggerName, config.GetEnvDefault("DD_LOG_LEVEL", "off"), "", "", false, true, false)
-			if err != nil {
-				fmt.Printf("Cannot setup logger, exiting: %v\n", err)
-				return err
-			}
-
-			return connectAndStream()
-		},
 	}
-	troubleshootLogsCmd.Flags().StringVar(&filters.Name, "name", "", "Filter by name")
-	troubleshootLogsCmd.Flags().StringVar(&filters.Type, "type", "", "Filter by type")
-	troubleshootLogsCmd.Flags().StringVar(&filters.Source, "source", "", "Filter by source")
-	troubleshootLogsCmd.Flags().StringVar(&filters.Service, "service", "", "Filter by service")
+	cmd.Flags().StringVar(&cliParams.filters.Name, "name", "", "Filter by name")
+	cmd.Flags().StringVar(&cliParams.filters.Type, "type", "", "Filter by type")
+	cmd.Flags().StringVar(&cliParams.filters.Source, "source", "", "Filter by source")
+	cmd.Flags().StringVar(&cliParams.filters.Service, "service", "", "Filter by service")
 
-	return []*cobra.Command{troubleshootLogsCmd}
+	return []*cobra.Command{cmd}
 }
 
-func connectAndStream() error {
+func streamLogs(cliParams *cliParams) error {
+	err := common.SetupConfigWithoutSecrets(cliParams.confFilePath, "")
+	if err != nil {
+		return fmt.Errorf("unable to set up global agent configuration: %v", err)
+	}
+
+	err = config.SetupLogger(config.CoreLoggerName, config.GetEnvDefault("DD_LOG_LEVEL", "off"), "", "", false, true, false)
+	if err != nil {
+		fmt.Printf("Cannot setup logger, exiting: %v\n", err)
+		return err
+	}
+
 	ipcAddress, err := config.GetIPCAddress()
 	if err != nil {
 		return err
 	}
 
-	body, err := json.Marshal(&filters)
+	body, err := json.Marshal(&cliParams.filters)
 
 	if err != nil {
 		return err

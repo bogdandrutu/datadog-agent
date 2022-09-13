@@ -16,22 +16,25 @@ import (
 	"golang.org/x/sys/windows/svc/eventlog"
 	"golang.org/x/sys/windows/svc/mgr"
 
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/pkg/config"
+	"github.com/DataDog/datadog-agent/pkg/util/fxutil"
 )
 
 // Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove-service",
 		Short: "Removes the agent from the service control manager",
 		Long:  ``,
-		RunE:  removeService,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return fxutil.OneShot(installService)
+		},
 	}
 	return []*cobra.Command{cmd}
 }
 
-func removeService(cmd *cobra.Command, args []string) error {
+func removeService() error {
 	m, err := mgr.Connect()
 	if err != nil {
 		return err

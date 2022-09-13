@@ -14,34 +14,37 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
+	"go.uber.org/fx"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/cmd/agent/common"
 	"github.com/DataDog/datadog-agent/pkg/api/security"
 	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/proto/pbgo"
+	"github.com/DataDog/datadog-agent/pkg/util/fxutil"
 	agentgrpc "github.com/DataDog/datadog-agent/pkg/util/grpc"
 )
 
+// cliParams are the command-line arguments for this subcommand
+type cliParams struct {
+	// confFilePath is the value of the --cfgpath flag.
+	confFilePath string
+}
+
 // Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
 	remoteConfigCmd := &cobra.Command{
 		Use:   "remote-config",
 		Short: "Remote configuration state command",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			err := common.SetupConfigWithoutSecrets(globalArgs.ConfFilePath, "")
-			if err != nil {
-				return fmt.Errorf("Unable to set up global agent configuration: %v", err)
-			}
-
-			if !config.Datadog.GetBool("remote_configuration.enabled") {
-				return fmt.Errorf("Remote configuration is not enabled")
-			}
-			return state(cmd, args)
+			return fxutil.OneShot(state,
+				fx.Supply(&cliParams{
+					confFilePath: globalArgs.ConfFilePath,
+				}),
+			)
 		},
 		Hidden: true,
 	}
@@ -49,7 +52,15 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 	return []*cobra.Command{remoteConfigCmd}
 }
 
-func state(cmd *cobra.Command, args []string, dialOpts ...grpc.DialOption) error {
+func state(cliParams *cliParams) error {
+	err := common.SetupConfigWithoutSecrets(cliParams.confFilePath, "")
+	if err != nil {
+		return fmt.Errorf("Unable to set up global agent configuration: %v", err)
+	}
+
+	if !config.Datadog.GetBool("remote_configuration.enabled") {
+		return fmt.Errorf("Remote configuration is not enabled")
+	}
 	fmt.Println("Fetching the configuration and director repos state..")
 	// Call GRPC endpoint returning state tree
 
@@ -64,7 +75,7 @@ func state(cmd *cobra.Command, args []string, dialOpts ...grpc.DialOption) error
 	}
 	ctx = metadata.NewOutgoingContext(ctx, md)
 
-	cli, err := agentgrpc.GetDDAgentSecureClient(ctx, dialOpts...)
+	cli, err := agentgrpc.GetDDAgentSecureClient(ctx)
 	if err != nil {
 		return err
 	}

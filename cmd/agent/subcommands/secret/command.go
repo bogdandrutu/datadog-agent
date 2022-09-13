@@ -12,47 +12,63 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/fx"
 
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/cmd/agent/common"
 	"github.com/DataDog/datadog-agent/pkg/api/util"
 	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/secrets"
+	"github.com/DataDog/datadog-agent/pkg/util/fxutil"
 )
 
+// cliParams are the command-line arguments for this subcommand
+type cliParams struct {
+	// confFilePath is the value of the --cfgpath flag.
+	confFilePath string
+}
+
 // Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
 	secretInfoCommand := &cobra.Command{
 		Use:   "secret",
 		Short: "Print information about decrypted secrets in configuration.",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			err := common.SetupConfigWithoutSecrets(globalArgs.ConfFilePath, "")
-			if err != nil {
-				fmt.Printf("unable to set up global agent configuration: %v\n", err)
-				return nil
-			}
-
-			err = config.SetupLogger(config.CoreLoggerName, config.GetEnvDefault("DD_LOG_LEVEL", "off"), "", "", false, true, false)
-			if err != nil {
-				fmt.Printf("Cannot setup logger, exiting: %v\n", err)
-				return err
-			}
-
-			if err := util.SetAuthToken(); err != nil {
-				fmt.Println(err)
-				return nil
-			}
-
-			if err := showSecretInfo(); err != nil {
-				fmt.Println(err)
-				return nil
-			}
-			return nil
+			return fxutil.OneShot(secret,
+				fx.Supply(&cliParams{
+					confFilePath: globalArgs.ConfFilePath,
+				}),
+			)
 		},
 	}
 
 	return []*cobra.Command{secretInfoCommand}
+}
+
+func secret(cliParams *cliParams) error {
+	err := common.SetupConfigWithoutSecrets(cliParams.confFilePath, "")
+	if err != nil {
+		fmt.Printf("unable to set up global agent configuration: %v\n", err)
+		return nil
+	}
+
+	err = config.SetupLogger(config.CoreLoggerName, config.GetEnvDefault("DD_LOG_LEVEL", "off"), "", "", false, true, false)
+	if err != nil {
+		fmt.Printf("Cannot setup logger, exiting: %v\n", err)
+		return err
+	}
+
+	if err := util.SetAuthToken(); err != nil {
+		fmt.Println(err)
+		return nil
+	}
+
+	if err := showSecretInfo(); err != nil {
+		fmt.Println(err)
+		return nil
+	}
+	return nil
 }
 
 func showSecretInfo() error {

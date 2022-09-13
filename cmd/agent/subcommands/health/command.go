@@ -15,47 +15,58 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+	"go.uber.org/fx"
 
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/cmd/agent/common"
 	"github.com/DataDog/datadog-agent/pkg/api/util"
 	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/status/health"
 	"github.com/DataDog/datadog-agent/pkg/util/flavor"
+	"github.com/DataDog/datadog-agent/pkg/util/fxutil"
 )
 
+// cliParams are the command-line arguments for this subcommand
+type cliParams struct {
+	// confFilePath is the value of the --cfgpath flag.
+	confFilePath string
+}
+
 // Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "health",
 		Short:        "Print the current agent health",
 		Long:         ``,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-
-			if flavor.GetFlavor() == flavor.ClusterAgent {
-				config.Datadog.SetConfigName("datadog-cluster")
-			}
-
-			// Set up config without secrets so that running the health command (e.g. from container
-			// liveness probe script) does not trigger a secret backend command call.
-			err := common.SetupConfigWithoutSecrets(globalArgs.ConfFilePath, "")
-			if err != nil {
-				return fmt.Errorf("unable to set up global agent configuration: %v", err)
-			}
-
-			err = config.SetupLogger(config.CoreLoggerName, config.GetEnvDefault("DD_LOG_LEVEL", "off"), "", "", false, true, false)
-			if err != nil {
-				fmt.Printf("Cannot setup logger, exiting: %v\n", err)
-				return err
-			}
-
-			return requestHealth()
+			return fxutil.OneShot(requestHealth,
+				fx.Supply(&cliParams{
+					confFilePath: globalArgs.ConfFilePath,
+				}),
+			)
 		},
 	}
 	return []*cobra.Command{cmd}
 }
-func requestHealth() error {
+func requestHealth(cliParams *cliParams) error {
+	if flavor.GetFlavor() == flavor.ClusterAgent {
+		config.Datadog.SetConfigName("datadog-cluster")
+	}
+
+	// Set up config without secrets so that running the health command (e.g. from container
+	// liveness probe script) does not trigger a secret backend command call.
+	err := common.SetupConfigWithoutSecrets(cliParams.confFilePath, "")
+	if err != nil {
+		return fmt.Errorf("unable to set up global agent configuration: %v", err)
+	}
+
+	err = config.SetupLogger(config.CoreLoggerName, config.GetEnvDefault("DD_LOG_LEVEL", "off"), "", "", false, true, false)
+	if err != nil {
+		fmt.Printf("Cannot setup logger, exiting: %v\n", err)
+		return err
+	}
+
 	c := util.GetClient(false) // FIX: get certificates right then make this true
 
 	ipcAddress, err := config.GetIPCAddress()

@@ -9,30 +9,43 @@ package diagnose
 import (
 	"fmt"
 
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"go.uber.org/fx"
+
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/cmd/agent/common"
 	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/diagnose"
 	"github.com/DataDog/datadog-agent/pkg/diagnose/connectivity"
+	"github.com/DataDog/datadog-agent/pkg/util/fxutil"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
-var noTrace bool
+// cliParams are the command-line arguments for this subcommand
+type cliParams struct {
+	// confFilePath is the value of the --cfgpath flag.
+	confFilePath string
+
+	// noTrace is the value of the --no-trace flag
+	noTrace bool
+}
 
 // Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
+	var noTrace bool
+
 	diagnoseMetadataAvailabilityCommand := &cobra.Command{
 		Use:   "metadata-availability",
 		Short: "Check availability of cloud provider and container metadata endpoints",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := configAndLogSetup(globalArgs); err != nil {
-				return err
-			}
-
-			return diagnose.RunAll(color.Output)
+			return fxutil.OneShot(runAll,
+				fx.Supply(&cliParams{
+					confFilePath: globalArgs.ConfFilePath,
+					noTrace:      false,
+				}),
+			)
 		},
 	}
 
@@ -41,11 +54,12 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 		Short: "Check connectivity between your system and Datadog endpoints",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := configAndLogSetup(globalArgs); err != nil {
-				return err
-			}
-
-			return connectivity.RunDatadogConnectivityDiagnose(color.Output, noTrace)
+			return fxutil.OneShot(runDatadogConnectivityDiagnose,
+				fx.Supply(&cliParams{
+					confFilePath: globalArgs.ConfFilePath,
+					noTrace:      noTrace,
+				}),
+			)
 		},
 	}
 	diagnoseDatadogConnectivityCommand.PersistentFlags().BoolVarP(&noTrace, "no-trace", "", false, "mute extra information about connection establishment, DNS lookup and TLS handshake")
@@ -62,9 +76,9 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 	return []*cobra.Command{diagnoseCommand}
 }
 
-func configAndLogSetup(globalArgs *app.GlobalArgs) error {
+func configAndLogSetup(cliParams *cliParams) error {
 	// Global config setup
-	err := common.SetupConfig(globalArgs.ConfFilePath)
+	err := common.SetupConfig(cliParams.confFilePath)
 	if err != nil {
 		return fmt.Errorf("unable to set up global agent configuration: %v", err)
 	}
@@ -77,4 +91,20 @@ func configAndLogSetup(globalArgs *app.GlobalArgs) error {
 	}
 
 	return nil
+}
+
+func runAll(cliParams *cliParams) error {
+	if err := configAndLogSetup(cliParams); err != nil {
+		return err
+	}
+
+	return diagnose.RunAll(color.Output)
+}
+
+func runDatadogConnectivityDiagnose(cliParams *cliParams) error {
+	if err := configAndLogSetup(cliParams); err != nil {
+		return err
+	}
+
+	return connectivity.RunDatadogConnectivityDiagnose(color.Output, cliParams.noTrace)
 }

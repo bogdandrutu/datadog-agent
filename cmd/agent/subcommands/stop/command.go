@@ -14,30 +14,42 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/fx"
 
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/cmd/agent/common"
 	"github.com/DataDog/datadog-agent/pkg/api/util"
 	"github.com/DataDog/datadog-agent/pkg/config"
+	"github.com/DataDog/datadog-agent/pkg/util/fxutil"
 )
 
+// cliParams are the command-line arguments for this subcommand
+type cliParams struct {
+	// confFilePath is the value of the --cfgpath flag.
+	confFilePath string
+}
+
 // Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
 	stopCmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stops a running Agent",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return stop(globalArgs, cmd, args)
+			return fxutil.OneShot(stop,
+				fx.Supply(&cliParams{
+					confFilePath: globalArgs.ConfFilePath,
+				}),
+			)
 		},
 	}
 
 	return []*cobra.Command{stopCmd}
 }
 
-func stop(globalArgs *app.GlobalArgs, cmd *cobra.Command, args []string) error {
+func stop(cliParams *cliParams) error {
 	// Global Agent configuration
-	err := common.SetupConfigWithoutSecrets(globalArgs.ConfFilePath, "")
+	err := common.SetupConfigWithoutSecrets(cliParams.confFilePath, "")
 	if err != nil {
 		return fmt.Errorf("unable to set up global agent configuration: %v", err)
 	}

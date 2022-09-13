@@ -9,49 +9,66 @@ package taggerlist
 import (
 	"fmt"
 
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"go.uber.org/fx"
+
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/cmd/agent/common"
 	"github.com/DataDog/datadog-agent/pkg/api/util"
 	"github.com/DataDog/datadog-agent/pkg/config"
 	tagger_api "github.com/DataDog/datadog-agent/pkg/tagger/api"
+	"github.com/DataDog/datadog-agent/pkg/util/fxutil"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
+// cliParams are the command-line arguments for this subcommand
+type cliParams struct {
+	// confFilePath is the value of the --cfgpath flag.
+	confFilePath string
+}
+
 // Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
 	taggerListCommand := &cobra.Command{
 		Use:   "tagger-list",
 		Short: "Print the tagger content of a running agent",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			err := common.SetupConfigWithoutSecrets(globalArgs.ConfFilePath, "")
-			if err != nil {
-				return fmt.Errorf("unable to set up global agent configuration: %v", err)
-			}
-
-			err = config.SetupLogger(config.CoreLoggerName, config.GetEnvDefault("DD_LOG_LEVEL", "off"), "", "", false, true, false)
-			if err != nil {
-				fmt.Printf("Cannot setup logger, exiting: %v\n", err)
-				return err
-			}
-
-			// Set session token
-			if err := util.SetAuthToken(); err != nil {
-				return err
-			}
-
-			url, err := getTaggerURL()
-			if err != nil {
-				return err
-			}
-
-			return tagger_api.GetTaggerList(color.Output, url)
+			return fxutil.OneShot(taggerList,
+				fx.Supply(&cliParams{
+					confFilePath: globalArgs.ConfFilePath,
+				}),
+			)
 		},
 	}
 
 	return []*cobra.Command{taggerListCommand}
+}
+
+func taggerList(cliParams *cliParams) error {
+	err := common.SetupConfigWithoutSecrets(cliParams.confFilePath, "")
+	if err != nil {
+		return fmt.Errorf("unable to set up global agent configuration: %v", err)
+	}
+
+	err = config.SetupLogger(config.CoreLoggerName, config.GetEnvDefault("DD_LOG_LEVEL", "off"), "", "", false, true, false)
+	if err != nil {
+		fmt.Printf("Cannot setup logger, exiting: %v\n", err)
+		return err
+	}
+
+	// Set session token
+	if err := util.SetAuthToken(); err != nil {
+		return err
+	}
+
+	url, err := getTaggerURL()
+	if err != nil {
+		return err
+	}
+
+	return tagger_api.GetTaggerList(color.Output, url)
 }
 
 func getTaggerURL() (string, error) {

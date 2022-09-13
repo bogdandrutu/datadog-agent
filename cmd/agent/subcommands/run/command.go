@@ -21,10 +21,11 @@ import (
 	_ "net/http/pprof" // Blank import used because this isn't directly used in this file
 
 	"github.com/spf13/cobra"
+	"go.uber.org/fx"
 	"gopkg.in/DataDog/dd-trace-go.v1/profiler"
 
 	"github.com/DataDog/datadog-agent/cmd/agent/api"
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/cmd/agent/common"
 	"github.com/DataDog/datadog-agent/cmd/agent/common/misconfig"
 	"github.com/DataDog/datadog-agent/cmd/agent/common/signals"
@@ -53,6 +54,7 @@ import (
 	"github.com/DataDog/datadog-agent/pkg/util"
 	"github.com/DataDog/datadog-agent/pkg/util/cloudproviders"
 	"github.com/DataDog/datadog-agent/pkg/util/flavor"
+	"github.com/DataDog/datadog-agent/pkg/util/fxutil"
 	"github.com/DataDog/datadog-agent/pkg/util/hostname"
 	"github.com/DataDog/datadog-agent/pkg/util/log"
 	"github.com/DataDog/datadog-agent/pkg/version"
@@ -89,46 +91,58 @@ import (
 	_ "github.com/DataDog/datadog-agent/pkg/metadata"
 )
 
-var (
-	// flags variables
+// demux is shared between StartAgent and StopAgent.
+var demux *aggregator.AgentDemultiplexer
+
+type cliParams struct {
+	// pidfilePath contains the value of the --pidfile flag.
 	pidfilePath string
 
-	configService *remoteconfig.Service
+	// confFilePath is the value of the --cfgpath flag.
+	confFilePath string
 
-	demux *aggregator.AgentDemultiplexer
-)
+	// sysProbeConfFilePath is the value of the --sysprobecfgpath flag.
+	sysProbeConfFilePath string
+}
 
 // Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
+	var pidfilePath string
+	runE := func(*cobra.Command, []string) error {
+		cliParams := cliParams{
+			pidfilePath:          pidfilePath,
+			confFilePath:         globalArgs.ConfFilePath,
+			sysProbeConfFilePath: globalArgs.SysProbeConfFilePath,
+		}
+		return fxutil.Run(
+			fx.Supply(&cliParams),
+			fx.Invoke(run),
+		)
+	}
+
 	runCmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run the Agent",
 		Long:  `Runs the agent in the foreground`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return Run(globalArgs, cmd, args)
-		},
+		RunE:  runE,
 	}
 	runCmd.Flags().StringVarP(&pidfilePath, "pidfile", "p", "", "path to the pidfile")
 
 	startCmd := &cobra.Command{
 		Use:        "start",
 		Deprecated: "Use \"run\" instead to start the Agent",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return Run(globalArgs, cmd, args)
-		},
+		RunE:       runE,
 	}
 	startCmd.Flags().StringVarP(&pidfilePath, "pidfile", "p", "", "path to the pidfile")
 
 	return []*cobra.Command{startCmd, runCmd}
 }
 
-// Run starts the main loop.
+// run starts the main loop.
 //
 // This is exported because it also used from the deprecated `agent start` command.
-func Run(globalArgs *app.GlobalArgs, cmd *cobra.Command, args []string) error {
-	defer func() {
-		StopAgent()
-	}()
+func run(cliParams *cliParams) error {
+	defer StopAgent(cliParams)
 
 	// prepare go runtime
 	ddruntime.SetMaxProcs()
@@ -166,7 +180,7 @@ func Run(globalArgs *app.GlobalArgs, cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	if err := StartAgent(globalArgs); err != nil {
+	if err := startAgent(cliParams); err != nil {
 		return err
 	}
 
@@ -176,8 +190,13 @@ func Run(globalArgs *app.GlobalArgs, cmd *cobra.Command, args []string) error {
 	}
 }
 
-// StartAgent Initializes the agent process
-func StartAgent(globalArgs *app.GlobalArgs) error {
+// StartAgentWithDefaults is a temporary way for other packages to use startAgent.
+func StartAgentWithDefaults() error {
+	return startAgent(&cliParams{})
+}
+
+// startAgent Initializes the agent process
+func startAgent(cliParams *cliParams) error {
 	var (
 		err            error
 		configSetupErr error
@@ -188,7 +207,7 @@ func StartAgent(globalArgs *app.GlobalArgs) error {
 	common.MainCtx, common.MainCtxCancel = context.WithCancel(context.Background())
 
 	// Global Agent configuration
-	configSetupErr = common.SetupConfig(globalArgs.ConfFilePath)
+	configSetupErr = common.SetupConfig(cliParams.confFilePath)
 
 	// Setup logger
 	if runtime.GOOS != "android" {
@@ -306,12 +325,12 @@ func StartAgent(globalArgs *app.GlobalArgs) error {
 		log.Debugf("Health check listening on port %d", healthPort)
 	}
 
-	if pidfilePath != "" {
-		err = pidfile.WritePID(pidfilePath)
+	if cliParams.pidfilePath != "" {
+		err = pidfile.WritePID(cliParams.pidfilePath)
 		if err != nil {
 			return log.Errorf("Error while writing PID file, exiting: %v", err)
 		}
-		log.Infof("pid '%d' written to pid file '%s'", os.Getpid(), pidfilePath)
+		log.Infof("pid '%d' written to pid file '%s'", os.Getpid(), cliParams.pidfilePath)
 	}
 
 	err = manager.ConfigureAutoExit(common.MainCtx)
@@ -333,6 +352,7 @@ func StartAgent(globalArgs *app.GlobalArgs) error {
 	}
 
 	// start remote configuration management
+	var configService *remoteconfig.Service
 	if config.Datadog.GetBool("remote_configuration.enabled") {
 		configService, err = remoteconfig.NewService()
 		if err != nil {
@@ -420,7 +440,7 @@ func StartAgent(globalArgs *app.GlobalArgs) error {
 		}
 	}
 
-	if err = common.SetupSystemProbeConfig(globalArgs.SysProbeConfFilePath); err != nil {
+	if err = common.SetupSystemProbeConfig(cliParams.sysProbeConfFilePath); err != nil {
 		log.Infof("System probe config not found, disabling pulling system probe info in the status page: %v", err)
 	}
 
@@ -497,7 +517,7 @@ func StartAgent(globalArgs *app.GlobalArgs) error {
 }
 
 // StopAgent Tears down the agent process
-func StopAgent() {
+func StopAgent(cliParams *cliParams) {
 	// retrieve the agent health before stopping the components
 	// GetReadyNonBlocking has a 100ms timeout to avoid blocking
 	health, err := health.GetReadyNonBlocking()
@@ -538,7 +558,7 @@ func StopAgent() {
 	gui.StopGUIServer()
 	profiler.Stop()
 
-	os.Remove(pidfilePath)
+	os.Remove(cliParams.pidfilePath)
 
 	// gracefully shut down any component
 	common.MainCtxCancel()

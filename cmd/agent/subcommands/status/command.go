@@ -16,21 +16,74 @@ import (
 	"os"
 	"time"
 
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"go.uber.org/fx"
+
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/cmd/agent/common"
 	"github.com/DataDog/datadog-agent/pkg/api/util"
 	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/status"
+	"github.com/DataDog/datadog-agent/pkg/util/fxutil"
 	"github.com/DataDog/datadog-agent/pkg/util/scrubber"
 
 	"github.com/spf13/cobra"
 )
 
-var (
+// cliParams are the command-line arguments for this subcommand
+type cliParams struct {
+	// confFilePath is the value of the --cfgpath flag.
+	confFilePath string
+
+	// sysProbeConfFilePath is the value of the --sysprobecfgpath flag.
+	sysProbeConfFilePath string
+
+	// args are the positional command-line arguments
+	args []string
+
 	jsonStatus      bool
 	prettyPrintJSON bool
 	statusFilePath  string
-)
+}
+
+// Commands returns a slice of subcommands for the 'agent' command.
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
+	cliParams := &cliParams{}
+	statusCmd := &cobra.Command{
+		Use:   "status [component [name]]",
+		Short: "Print the current status",
+		Long:  ``,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cliParams.confFilePath = globalArgs.ConfFilePath
+			cliParams.sysProbeConfFilePath = globalArgs.SysProbeConfFilePath
+			cliParams.args = args
+			return fxutil.OneShot(statusCmd,
+				fx.Supply(cliParams),
+			)
+		},
+	}
+	statusCmd.Flags().BoolVarP(&cliParams.jsonStatus, "json", "j", false, "print out raw json")
+	statusCmd.Flags().BoolVarP(&cliParams.prettyPrintJSON, "pretty-json", "p", false, "pretty print JSON")
+	statusCmd.Flags().StringVarP(&cliParams.statusFilePath, "file", "o", "", "Output the status command to a file")
+
+	componentCmd := &cobra.Command{
+		Use:   "component",
+		Short: "Print the component status",
+		Long:  ``,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cliParams.confFilePath = globalArgs.ConfFilePath
+			cliParams.sysProbeConfFilePath = globalArgs.SysProbeConfFilePath
+			cliParams.args = args
+			return fxutil.OneShot(componentStatusCmd,
+				fx.Supply(cliParams),
+			)
+		},
+	}
+	componentCmd.Flags().BoolVarP(&cliParams.prettyPrintJSON, "pretty-json", "p", false, "pretty print JSON")
+	componentCmd.Flags().StringVarP(&cliParams.statusFilePath, "file", "o", "", "Output the status command to a file")
+	statusCmd.AddCommand(componentCmd)
+
+	return []*cobra.Command{statusCmd}
+}
 
 func scrubMessage(message string) string {
 	msgScrubbed, err := scrubber.ScrubBytes([]byte(message))
@@ -57,64 +110,30 @@ func redactError(unscrubbedError error) error {
 	return scrubbedError
 }
 
-// Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
-	statusCmd := &cobra.Command{
-		Use:   "status [component [name]]",
-		Short: "Print the current status",
-		Long:  ``,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// Prevent autoconfig to run when running status as it logs before logger is setup
-			// Cannot rely on config.Override as env detection is run before overrides are set
-			os.Setenv("DD_AUTOCONFIG_FROM_ENVIRONMENT", "false")
-			err := common.SetupConfigWithoutSecrets(globalArgs.ConfFilePath, "")
-			if err != nil {
-				return fmt.Errorf("unable to set up global agent configuration: %v", err)
-			}
-
-			err = config.SetupLogger(config.CoreLoggerName, config.GetEnvDefault("DD_LOG_LEVEL", "off"), "", "", false, true, false)
-			if err != nil {
-				fmt.Printf("Cannot setup logger, exiting: %v\n", err)
-				return err
-			}
-
-			_ = common.SetupSystemProbeConfig(globalArgs.SysProbeConfFilePath)
-
-			return redactError(requestStatus())
-		},
+func statusCmd(cliParams *cliParams) error {
+	// Prevent autoconfig to run when running status as it logs before logger is setup
+	// Cannot rely on config.Override as env detection is run before overrides are set
+	os.Setenv("DD_AUTOCONFIG_FROM_ENVIRONMENT", "false")
+	err := common.SetupConfigWithoutSecrets(cliParams.confFilePath, "")
+	if err != nil {
+		return fmt.Errorf("unable to set up global agent configuration: %v", err)
 	}
-	statusCmd.Flags().BoolVarP(&jsonStatus, "json", "j", false, "print out raw json")
-	statusCmd.Flags().BoolVarP(&prettyPrintJSON, "pretty-json", "p", false, "pretty print JSON")
-	statusCmd.Flags().StringVarP(&statusFilePath, "file", "o", "", "Output the status command to a file")
 
-	componentCmd := &cobra.Command{
-		Use:   "component",
-		Short: "Print the component status",
-		Long:  ``,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			err := common.SetupConfigWithoutSecrets(globalArgs.ConfFilePath, "")
-			if err != nil {
-				return fmt.Errorf("unable to set up global agent configuration: %v", err)
-			}
-
-			if len(args) != 1 {
-				return fmt.Errorf("a component name must be specified")
-			}
-
-			return redactError(componentStatus(args[0]))
-		},
+	err = config.SetupLogger(config.CoreLoggerName, config.GetEnvDefault("DD_LOG_LEVEL", "off"), "", "", false, true, false)
+	if err != nil {
+		fmt.Printf("Cannot setup logger, exiting: %v\n", err)
+		return err
 	}
-	componentCmd.Flags().BoolVarP(&prettyPrintJSON, "pretty-json", "p", false, "pretty print JSON")
-	componentCmd.Flags().StringVarP(&statusFilePath, "file", "o", "", "Output the status command to a file")
-	statusCmd.AddCommand(componentCmd)
 
-	return []*cobra.Command{statusCmd}
+	_ = common.SetupSystemProbeConfig(cliParams.sysProbeConfFilePath)
+
+	return redactError(requestStatus(cliParams))
 }
 
-func requestStatus() error {
+func requestStatus(cliParams *cliParams) error {
 	var s string
 
-	if !prettyPrintJSON && !jsonStatus {
+	if !cliParams.prettyPrintJSON && !cliParams.jsonStatus {
 		fmt.Printf("Getting the status from the agent.\n\n")
 	}
 	ipcAddress, err := config.GetIPCAddress()
@@ -136,11 +155,11 @@ func requestStatus() error {
 	}
 
 	// The rendering is done in the client so that the agent has less work to do
-	if prettyPrintJSON {
+	if cliParams.prettyPrintJSON {
 		var prettyJSON bytes.Buffer
 		json.Indent(&prettyJSON, r, "", "  ") //nolint:errcheck
 		s = prettyJSON.String()
-	} else if jsonStatus {
+	} else if cliParams.jsonStatus {
 		s = string(r)
 	} else {
 		formattedStatus, err := status.FormatStatus(r)
@@ -150,8 +169,8 @@ func requestStatus() error {
 		s = scrubMessage(formattedStatus)
 	}
 
-	if statusFilePath != "" {
-		ioutil.WriteFile(statusFilePath, []byte(s), 0644) //nolint:errcheck
+	if cliParams.statusFilePath != "" {
+		ioutil.WriteFile(cliParams.statusFilePath, []byte(s), 0644) //nolint:errcheck
 	} else {
 		fmt.Println(s)
 	}
@@ -186,7 +205,20 @@ func getAPMStatus() map[string]interface{} {
 	return status
 }
 
-func componentStatus(component string) error {
+func componentStatusCmd(cliParams *cliParams) error {
+	err := common.SetupConfigWithoutSecrets(cliParams.confFilePath, "")
+	if err != nil {
+		return fmt.Errorf("unable to set up global agent configuration: %v", err)
+	}
+
+	if len(cliParams.args) != 1 {
+		return fmt.Errorf("a component name must be specified")
+	}
+
+	return redactError(componentStatus(cliParams, cliParams.args[0]))
+}
+
+func componentStatus(cliParams *cliParams, component string) error {
 	var s string
 
 	urlstr := fmt.Sprintf("https://localhost:%v/agent/%s/status", config.Datadog.GetInt("cmd_port"), component)
@@ -197,7 +229,7 @@ func componentStatus(component string) error {
 	}
 
 	// The rendering is done in the client so that the agent has less work to do
-	if prettyPrintJSON {
+	if cliParams.prettyPrintJSON {
 		var prettyJSON bytes.Buffer
 		json.Indent(&prettyJSON, r, "", "  ") //nolint:errcheck
 		s = prettyJSON.String()
@@ -205,8 +237,8 @@ func componentStatus(component string) error {
 		s = scrubMessage(string(r))
 	}
 
-	if statusFilePath != "" {
-		ioutil.WriteFile(statusFilePath, []byte(s), 0644) //nolint:errcheck
+	if cliParams.statusFilePath != "" {
+		ioutil.WriteFile(cliParams.statusFilePath, []byte(s), 0644) //nolint:errcheck
 	} else {
 		fmt.Println(s)
 	}

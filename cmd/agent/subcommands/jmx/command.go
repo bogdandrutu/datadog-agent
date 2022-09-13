@@ -18,48 +18,57 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/fx"
 
-	"github.com/DataDog/datadog-agent/cmd/agent/app"
+	"github.com/DataDog/datadog-agent/cmd/agent/command"
 	"github.com/DataDog/datadog-agent/cmd/agent/common"
 	"github.com/DataDog/datadog-agent/cmd/internal/standalone"
 	"github.com/DataDog/datadog-agent/pkg/collector"
 	"github.com/DataDog/datadog-agent/pkg/config"
+	"github.com/DataDog/datadog-agent/pkg/util/fxutil"
 )
 
-var (
-	cliSelectedChecks = []string{}
-	jmxLogLevel       string
-	saveFlare         bool
-)
+type cliParams struct {
+	// command is the jmx console command to run
+	command string
 
-var (
-	discoveryTimeout       uint
-	discoveryRetryInterval uint
-	discoveryMinInstances  uint
-)
+	// confFilePath is the value of the --cfgpath flag.
+	confFilePath string
+
+	cliSelectedChecks     []string
+	jmxLogLevel           string
+	saveFlare             bool
+	discoveryTimeout      uint
+	discoveryMinInstances uint
+}
 
 // Commands returns a slice of subcommands for the 'agent' command.
-func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
+func Commands(globalArgs *command.GlobalArgs) []*cobra.Command {
+	cliParams := &cliParams{}
+	var discoveryRetryInterval uint
 	jmxCmd := &cobra.Command{
 		Use:   "jmx",
 		Short: "Run troubleshooting commands on JMXFetch integrations",
 		Long:  ``,
 	}
-	jmxCmd.PersistentFlags().StringVarP(&jmxLogLevel, "log-level", "l", "", "set the log level (default 'debug') (deprecated, use the env var DD_LOG_LEVEL instead)")
-	jmxCmd.PersistentFlags().UintVarP(&discoveryTimeout, "discovery-timeout", "", 5, "max retry duration until Autodiscovery resolves the check template (in seconds)")
+	jmxCmd.PersistentFlags().StringVarP(&cliParams.jmxLogLevel, "log-level", "l", "", "set the log level (default 'debug') (deprecated, use the env var DD_LOG_LEVEL instead)")
+	jmxCmd.PersistentFlags().UintVarP(&cliParams.discoveryTimeout, "discovery-timeout", "", 5, "max retry duration until Autodiscovery resolves the check template (in seconds)")
 	jmxCmd.PersistentFlags().UintVarP(&discoveryRetryInterval, "discovery-retry-interval", "", 1, "(unused)")
-	jmxCmd.PersistentFlags().UintVarP(&discoveryMinInstances, "discovery-min-instances", "", 1, "minimum number of config instances to be discovered before running the check(s)")
+	jmxCmd.PersistentFlags().UintVarP(&cliParams.discoveryMinInstances, "discovery-min-instances", "", 1, "minimum number of config instances to be discovered before running the check(s)")
 
 	jmxCollectCmd := &cobra.Command{
 		Use:   "collect",
 		Short: "Start the collection of metrics based on your current configuration and display them in the console.",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJmxCommandConsole(globalArgs, "collect")
+			cliParams.command = "collect"
+			return fxutil.OneShot(runJmxCommandConsole,
+				fx.Supply(cliParams),
+			)
 		},
 	}
-	jmxCollectCmd.PersistentFlags().StringSliceVar(&cliSelectedChecks, "checks", []string{}, "JMX checks (ex: jmx,tomcat)")
-	jmxCollectCmd.PersistentFlags().BoolVarP(&saveFlare, "flare", "", false, "save jmx list results to the log dir so it may be reported in a flare")
+	jmxCollectCmd.PersistentFlags().StringSliceVar(&cliParams.cliSelectedChecks, "checks", []string{}, "JMX checks (ex: jmx,tomcat)")
+	jmxCollectCmd.PersistentFlags().BoolVarP(&cliParams.saveFlare, "flare", "", false, "save jmx list results to the log dir so it may be reported in a flare")
 	jmxCmd.AddCommand(jmxCollectCmd)
 
 	jmxListEverythingCmd := &cobra.Command{
@@ -67,7 +76,10 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 		Short: "List every attributes available that has a type supported by JMXFetch.",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJmxCommandConsole(globalArgs, "list_everything")
+			cliParams.command = "list_everything"
+			return fxutil.OneShot(runJmxCommandConsole,
+				fx.Supply(cliParams),
+			)
 		},
 	}
 
@@ -76,7 +88,10 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 		Short: "List attributes that match at least one of your instances configuration.",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJmxCommandConsole(globalArgs, "list_matching_attributes")
+			cliParams.command = "list_matching_attributes"
+			return fxutil.OneShot(runJmxCommandConsole,
+				fx.Supply(cliParams),
+			)
 		},
 	}
 
@@ -85,7 +100,10 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 		Short: "List attributes and metrics data that match at least one of your instances configuration.",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJmxCommandConsole(globalArgs, "list_with_metrics")
+			cliParams.command = "list_with_metrics"
+			return fxutil.OneShot(runJmxCommandConsole,
+				fx.Supply(cliParams),
+			)
 		},
 	}
 
@@ -94,7 +112,10 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 		Short: "List attributes and metrics data that match at least one of your instances configuration, including rates and counters.",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJmxCommandConsole(globalArgs, "list_with_rate_metrics")
+			cliParams.command = "list_with_rate_metrics"
+			return fxutil.OneShot(runJmxCommandConsole,
+				fx.Supply(cliParams),
+			)
 		},
 	}
 
@@ -103,7 +124,10 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 		Short: "List attributes that do match one of your instances configuration but that are not being collected because it would exceed the number of metrics that can be collected.",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJmxCommandConsole(globalArgs, "list_limited_attributes")
+			cliParams.command = "list_limited_attributes"
+			return fxutil.OneShot(runJmxCommandConsole,
+				fx.Supply(cliParams),
+			)
 		},
 	}
 
@@ -112,7 +136,10 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 		Short: "List attributes that will actually be collected by your current instances configuration.",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJmxCommandConsole(globalArgs, "list_collected_attributes")
+			cliParams.command = "list_collected_attributes"
+			return fxutil.OneShot(runJmxCommandConsole,
+				fx.Supply(cliParams),
+			)
 		},
 	}
 
@@ -121,7 +148,10 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 		Short: "List attributes that don’t match any of your instances configuration.",
 		Long:  ``,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runJmxCommandConsole(globalArgs, "list_not_matching_attributes")
+			cliParams.command = "list_not_matching_attributes"
+			return fxutil.OneShot(runJmxCommandConsole,
+				fx.Supply(cliParams),
+			)
 		},
 	}
 
@@ -130,10 +160,18 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 		Short: "List attributes matched by JMXFetch.",
 		Long:  ``,
 	}
-	jmxListCmd.AddCommand(jmxListEverythingCmd, jmxListMatchingCmd, jmxListLimitedCmd, jmxListCollectedCmd, jmxListNotMatchingCmd, jmxListWithMetricsCmd, jmxListWithRateMetricsCmd)
+	jmxListCmd.AddCommand(
+		jmxListEverythingCmd,
+		jmxListMatchingCmd,
+		jmxListLimitedCmd,
+		jmxListCollectedCmd,
+		jmxListNotMatchingCmd,
+		jmxListWithMetricsCmd,
+		jmxListWithRateMetricsCmd,
+	)
 
-	jmxListCmd.PersistentFlags().StringSliceVar(&cliSelectedChecks, "checks", []string{}, "JMX checks (ex: jmx,tomcat)")
-	jmxListCmd.PersistentFlags().BoolVarP(&saveFlare, "flare", "", false, "save jmx list results to the log dir so it may be reported in a flare")
+	jmxListCmd.PersistentFlags().StringSliceVar(&cliParams.cliSelectedChecks, "checks", []string{}, "JMX checks (ex: jmx,tomcat)")
+	jmxListCmd.PersistentFlags().BoolVarP(&cliParams.saveFlare, "flare", "", false, "save jmx list results to the log dir so it may be reported in a flare")
 	jmxCmd.AddCommand(jmxListCmd)
 
 	// attach the command to the root
@@ -142,16 +180,18 @@ func Commands(globalArgs *app.GlobalArgs) []*cobra.Command {
 
 // runJmxCommandConsole sets up the common utils necessary for JMX, and executes the command
 // with the Console reporter
-func runJmxCommandConsole(globalArgs *app.GlobalArgs, command string) error {
+func runJmxCommandConsole(cliParams *cliParams) error {
 	logFile := ""
-	if saveFlare {
+	if cliParams.saveFlare {
 		// Windows cannot accept ":" in file names
 		filenameSafeTimeStamp := strings.ReplaceAll(time.Now().UTC().Format(time.RFC3339), ":", "-")
-		logFile = filepath.Join(common.DefaultJMXFlareDirectory, "jmx_"+command+"_"+filenameSafeTimeStamp+".log")
-		jmxLogLevel = "debug"
+		logFile = filepath.Join(common.DefaultJMXFlareDirectory, "jmx_"+cliParams.command+"_"+filenameSafeTimeStamp+".log")
+		cliParams.jmxLogLevel = "debug"
 	}
 
-	logLevel, _, err := standalone.SetupCLI(config.CoreLoggerName, globalArgs.ConfFilePath, "", logFile, jmxLogLevel, "debug")
+	logLevel, _, err := standalone.SetupCLI(
+		config.CoreLoggerName, cliParams.confFilePath, "", logFile,
+		cliParams.jmxLogLevel, "debug")
 	if err != nil {
 		fmt.Printf("Cannot initialize command: %v\n", err)
 		return err
@@ -171,11 +211,11 @@ func runJmxCommandConsole(globalArgs *app.GlobalArgs, command string) error {
 	// Note: when no checks are selected, cliSelectedChecks will be the empty slice and thus
 	//       WaitForConfigsFromAD will timeout and return no AD configs.
 	waitCtx, cancelTimeout := context.WithTimeout(
-		context.Background(), time.Duration(discoveryTimeout)*time.Second)
-	allConfigs := common.WaitForConfigsFromAD(waitCtx, cliSelectedChecks, int(discoveryMinInstances))
+		context.Background(), time.Duration(cliParams.discoveryTimeout)*time.Second)
+	allConfigs := common.WaitForConfigsFromAD(waitCtx, cliParams.cliSelectedChecks, int(cliParams.discoveryMinInstances))
 	cancelTimeout()
 
-	err = standalone.ExecJMXCommandConsole(command, cliSelectedChecks, logLevel, allConfigs)
+	err = standalone.ExecJMXCommandConsole(cliParams.command, cliParams.cliSelectedChecks, logLevel, allConfigs)
 
 	if runtime.GOOS == "windows" {
 		standalone.PrintWindowsUserWarning("jmx")
