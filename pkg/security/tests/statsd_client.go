@@ -9,6 +9,7 @@
 package tests
 
 import (
+	"sync"
 	"time"
 
 	"github.com/DataDog/datadog-go/v5/statsd"
@@ -18,6 +19,7 @@ var _ statsd.ClientInterface = &StatsdClient{}
 
 // StatsdClient is a statsd client for used for tests
 type StatsdClient struct {
+	sync.RWMutex
 	counts map[string]int64
 }
 
@@ -28,6 +30,13 @@ func NewStatsdClient() *StatsdClient {
 	}
 }
 
+// Get return the count
+func (s *StatsdClient) Get(key string) int64 {
+	s.RLock()
+	defer s.RUnlock()
+	return s.counts[key]
+}
+
 // Gauge does nothing and returns nil
 func (s *StatsdClient) Gauge(name string, value float64, tags []string, rate float64) error {
 	return nil
@@ -35,6 +44,9 @@ func (s *StatsdClient) Gauge(name string, value float64, tags []string, rate flo
 
 // Count does nothing and returns nil
 func (s *StatsdClient) Count(name string, value int64, tags []string, rate float64) error {
+	s.Lock()
+	defer s.Unlock()
+
 	if len(tags) == 0 {
 		s.counts[name] = value
 	}
@@ -107,6 +119,9 @@ func (s *StatsdClient) Close() error {
 
 // Flush does nothing and returns nil
 func (s *StatsdClient) Flush() error {
+	s.Lock()
+	defer s.Unlock()
+
 	s.counts = make(map[string]int64)
 	return nil
 }
