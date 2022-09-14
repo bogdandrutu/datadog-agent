@@ -152,7 +152,7 @@ rules:
 
 var (
 	testEnvironment  string
-	useReload        bool
+	withoutReload    bool
 	logLevelStr      string
 	logPatterns      stringSlice
 	logTags          stringSlice
@@ -685,8 +685,13 @@ func newTestModule(t testing.TB, macroDefs []*rules.MacroDefinition, ruleDefs []
 		}
 	}
 
-	if useReload && testMod != nil {
-		if opts.Equal(testMod.opts) {
+	if withoutReload {
+		if testMod != nil {
+			testMod.probeHandler.SetModule(nil)
+			testMod.cleanup()
+		}
+	} else {
+		if testMod != nil && opts.Equal(testMod.opts) {
 			testMod.st = st
 			testMod.cmdWrapper = cmdWrapper
 			testMod.t = t
@@ -702,9 +707,10 @@ func newTestModule(t testing.TB, macroDefs []*rules.MacroDefinition, ruleDefs []
 				t.Logf("%s entry stats: %s\n", t.Name(), GetStatusMetrics(testMod.probe))
 			}
 			return testMod, nil
+		} else if testMod != nil {
+			testMod.probeHandler.SetModule(nil)
+			testMod.cleanup()
 		}
-		testMod.probeHandler.SetModule(nil)
-		testMod.cleanup()
 	}
 
 	t.Log("Instantiating a new security module")
@@ -1236,14 +1242,6 @@ func (tm *testModule) Close() {
 	if logStatusMetrics {
 		tm.t.Logf("%s exit stats: %s\n", tm.t.Name(), GetStatusMetrics(tm.probe))
 	}
-
-	if useReload {
-		if _, err := newTestModule(tm.t, nil, nil, tm.opts); err != nil {
-			tm.t.Errorf("couldn't reload module with an empty policy: %v", err)
-		}
-	} else {
-		tm.cleanup()
-	}
 }
 
 var logInitilialized bool
@@ -1412,7 +1410,7 @@ func waitForOpenProbeEvent(test *testModule, action func() error, filename strin
 func TestMain(m *testing.M) {
 	flag.Parse()
 	retCode := m.Run()
-	if useReload && testMod != nil {
+	if testMod != nil {
 		testMod.cleanup()
 	}
 	os.Exit(retCode)
@@ -1421,7 +1419,7 @@ func TestMain(m *testing.M) {
 func init() {
 	os.Setenv("RUNTIME_SECURITY_TESTSUITE", "true")
 	flag.StringVar(&testEnvironment, "env", HostEnvironment, "environment used to run the test suite: ex: host, docker")
-	flag.BoolVar(&useReload, "reload", true, "reload rules instead of stopping/starting the agent for every test")
+	flag.BoolVar(&withoutReload, "without-reload", false, "do not use reload, force stopping/starting the agent for every test")
 	flag.StringVar(&logLevelStr, "loglevel", seelog.WarnStr, "log level")
 	flag.Var(&logPatterns, "logpattern", "List of log pattern")
 	flag.Var(&logTags, "logtag", "List of log tag")
