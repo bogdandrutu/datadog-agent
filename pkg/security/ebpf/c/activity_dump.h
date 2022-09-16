@@ -13,7 +13,7 @@ struct activity_dump_config {
 struct activity_dump_rate_limiter_ctx {
     u64 current_period;
     u32 counter;
-    u32 padding;
+    u32 dropped;
 };
 
 struct bpf_map_def SEC("maps/activity_dump_rate_limiters") activity_dump_rate_limiters = {
@@ -413,6 +413,7 @@ __attribute__((always_inline)) u8 activity_dump_rate_limiter_allow(struct activi
         struct activity_dump_rate_limiter_ctx rate_ctx = {
             .current_period = now,
             .counter = should_count,
+            .dropped = 0,
         };
         bpf_map_update_elem(&activity_dump_rate_limiters, &cookie, &rate_ctx, BPF_ANY);
         return 1;
@@ -426,10 +427,26 @@ __attribute__((always_inline)) u8 activity_dump_rate_limiter_allow(struct activi
     if (delta > 1000000000) { // if more than 1 sec ellapsed we reset the period
         rate_ctx_p->current_period = now;
         rate_ctx_p->counter = should_count;
+        rate_ctx_p->dropped = 0;
         return 1;
     }
 
     if (rate_ctx_p->counter >= config->events_rate) {
+        // if we already allowed more than rate x 5, deny
+        if (rate_ctx_p->dropped >= config->events_rate * 5) {
+            return 0;
+        }
+        // if we are between rate and rate * 5, apply a decreasing rate:
+        // (counter * 100 / (rate * 5) == (counter * 20 / rate)
+        if ((now & 100) > (rate_ctx_p->counter * 20 / config->events_rate)) {
+            if (should_count) {
+                __sync_fetch_and_add(&rate_ctx_p->counter, 1);
+            }
+            return 1;
+        }
+        if (should_count) {
+            __sync_fetch_and_add(&rate_ctx_p->dropped, 1);
+        }
         return 0;
     } else if (should_count) {
         __sync_fetch_and_add(&rate_ctx_p->counter, 1);
