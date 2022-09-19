@@ -1,0 +1,3 @@
+* clean up external use of run.Start/StopAgent
+* clean up external use of controlsvc.Start/StopService
+* secrethelper to cmd/secrethelper (no deps, no fx)
